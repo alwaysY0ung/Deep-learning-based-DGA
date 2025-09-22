@@ -1,3 +1,10 @@
-generated_images/
-mnist_example/models/
+# cache
+models/
+
+# data
 cache/
+dataset/
+
+# etc
+__pycache__/
+wandb/
