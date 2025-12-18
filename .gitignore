@@ -1,10 +1,33 @@
+.gitignore
+
 # cache
 models/
+artifacts/
 
 # data
 cache/
 dataset/
 
+# code file
+DA/
+Transformer/__pycache__
+Transformer/model
+Transformer/token_based
+
+
 # etc
 __pycache__/
 wandb/
+
+# Tokenizer
+Tokenizer/__pycache__
+Tokenizer/data
+Tokenizer/apply.py
+Tokenizer/corpus_temp.txt
+Tokenizer/logfile_1.log
+Tokenizer/special_token_ids.py
+Tokenizer/tokenizer_all_copy.py
+Tokenizer/tokenizer_analysis*.*
+Tokenizer/tokenizer_example*.*
+Tokenizer/tokenizer_year.py
+Tokenizer/tokenizer-*.json
