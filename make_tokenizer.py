@@ -31,7 +31,7 @@ def train(df: pl.DataFrame,
         vocab_size: int,
         min_freq: int,
         max_len: int,
-        tokenizer_path: str | Path = "artifacts/dga_wordpiece_tokenizer.json",
+        tokenizer_path: str | Path = "artifacts/tokenizer-{min_freq}-{vocab_size}.json",
         use_bert_pretokenizer: bool = False,
     ) -> Tokenizer:
 
