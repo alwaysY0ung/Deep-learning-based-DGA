@@ -7,7 +7,7 @@ import sys, os
 class PretrainConfig:
     # Data
     max_len_char: int = 77
-    vocab_size_char: int = 131
+    vocab_size_char: int = 43
     text_col: str = "domain"
     label_col: str = "label"
     
@@ -58,7 +58,7 @@ class FinetuningConfig:
     max_len_token: int = 30
     max_len_char: int = 77
     vocab_size_token: int = 30522 # tokenizer_m.vocab_size
-    vocab_size_char: int = 41
+    vocab_size_char: int = 43
 
     num_epochs: int = 5
     batch_size: int = 128
