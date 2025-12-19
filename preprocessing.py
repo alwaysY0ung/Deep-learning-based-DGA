@@ -181,7 +181,8 @@ class FineTuningDataset(Dataset) :
         self.mask_idx = special_ids.mask_id
         self.cls_idx = special_ids.cls_id
         self.char_list = list("abcdefghijklmnopqrstuvwxyz0123456789-.")
-        self.special_tokens = ['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[MASK]']
+        # self.special_tokens = ['[PAD]', '[UNK]', '[SEP]', '[CLS]', '[MASK]']
+        self.special_tokens = ['[PAD]', '[UNK]', '[MASK]']
         self.all_tokens = self.special_tokens + self.char_list
 
         self.char2id = {char: idx for idx, char in enumerate(self.all_tokens)}

@@ -161,17 +161,12 @@ class PretrainedModel(nn.Module) :
 
 
 class FinetuningHead(nn.Module) :
-    def __init__(self, d_model, dropout, clf_norm = 'pool') :
+    def __init__(self, input_dim, d_model, dropout) :
         super().__init__()
-
+        self.input_dim = input_dim
         self.d_model = d_model
-        self.clf_norm = clf_norm
 
-        if clf_norm == "pool" :
-            self.dense1 = nn.Linear(d_model * 4, d_model * 2)
-        else :
-            self.dense1 = nn.Linear(d_model * 2, d_model * 2)
-
+        self.dense1 = nn.Linear(input_dim, d_model * 2)
         self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(d_model * 2, 2)
 
@@ -185,65 +180,117 @@ class FinetuningHead(nn.Module) :
         return logits
     
 class FineTuningModel(nn.Module):
-    def __init__(self, pretrain_model_t, pretrain_model_c, dropout=0.1, padding_idx=0, clf_norm = 'pool'):
+    def __init__(self, pretrain_model_t=None, pretrain_model_c=None,
+                 dropout=0.1, padding_idx=0, clf_norm = 'pool', freeze_backbone=True):
         super().__init__()
 
         self.padding_idx = padding_idx
         self.clf_norm = clf_norm
+        self.use_token = pretrain_model_t is not None
+        self.use_char = pretrain_model_c is not None
+
+        sample_model = pretrain_model_t if self.use_token else pretrain_model_c # Extract d_model value
+        d_model = sample_model.d_model
+
+        num_active_paths = sum([self.use_token, self.use_char])
+        dim_per_path = d_model * 2 if self.clf_norm == 'pool' else d_model
+        total_input_dim = dim_per_path * num_active_paths
 
         # --- Token Path Components ---
         # load_pretrain(pretrain_model_t)
-        self.transformer_encoder_t = pretrain_model_t.transformer
-        self.embedding_t = pretrain_model_t.embedding
-        self.positional_encoding_t = pretrain_model_t.positional_encoding
+        if self.use_token:
+            self.transformer_encoder_t = pretrain_model_t.transformer
+            self.embedding_t = pretrain_model_t.embedding
+            self.positional_encoding_t = pretrain_model_t.positional_encoding
+            if freeze_backbone: # full finetuing
+                self._set_grad(self.transformer_encoder_t, False)
+                self._set_grad(self.embedding_t, False)
+                self._set_grad(self.positional_encoding_t, False)
 
         # --- Character Path Components ---
         # load_pretrain(pretrain_model_c)
-        self.transformer_encoder_c = pretrain_model_c.transformer
-        self.embedding_c = pretrain_model_c.embedding
-        self.positional_encoding_c = pretrain_model_c.positional_encoding
+        if self.use_char:
+            self.transformer_encoder_c = pretrain_model_c.transformer
+            self.embedding_c = pretrain_model_c.embedding
+            self.positional_encoding_c = pretrain_model_c.positional_encoding
+            if freeze_backbone:
+                self._set_grad(self.transformer_encoder_c, False)
+                self._set_grad(self.embedding_c, False)
+                self._set_grad(self.positional_encoding_c, False)
         
         # DGA 분류 헤드 연결
         self.classifier_head = FinetuningHead(
-            d_model=pretrain_model_t.d_model,
-            dropout=dropout,
-            clf_norm=self.clf_norm
+            input_dim=total_input_dim,
+            d_model=d_model,
+            dropout=dropout
         )
 
-    def create_padding_mask(self, input_ids):
-        return (input_ids == self.padding_idx)
+    def _set_grad(self, module, requires_grad=False):
+        for param in module.parameters():
+            param.requires_grad = requires_grad
 
-    def forward(self, input_ids_t, input_ids_c):
+    def create_padding_mask(self, input_ids):
+        return (input_ids == self.padding_idx).to(input_ids.device)
+
+    def forward(self, input_ids_t=None, input_ids_c=None):
+        features = []
 
         # --- 1. Token Path (X_t) 처리 ---
-        token_embed_t = self.embedding_t(input_ids_t)
-        x_t = self.positional_encoding_t(token_embed_t)
-        padding_mask_t = self.create_padding_mask(input_ids_t)
-        
-        encoder_output_t = self.transformer_encoder_t(x_t, mask=padding_mask_t)
+        if self.use_token and input_ids_t is not None:
+            t_embed = self.embedding_t(input_ids_t)
+            t_x = self.positional_encoding_t(t_embed)
+            t_mask = self.create_padding_mask(input_ids_t)
+            t_out = self.transformer_encoder_t(t_x, mask=t_mask)
 
-        if self.clf_norm == 'pool' :
-            max_output_t = encoder_output_t.max(dim=1).values
-            avg_output_t = encoder_output_t.mean(dim=1)
-            cls_output_t = torch.cat((max_output_t, avg_output_t), dim=1)
-        else :
-            cls_output_t = encoder_output_t[:, 0, :]
+            if self.clf_norm == 'pool':
+                # Max pool + Mean pool (d_model * 2)
+                t_feat = torch.cat([t_out.max(dim=1).values, t_out.mean(dim=1)], dim=1)
+            else:
+                # CLS Token (d_model * 1)
+                t_feat = t_out[:, 0, :]
+            features.append(t_feat)
 
         # --- 2. Character Path (X_c) 처리 ---
-        token_embed_c = self.embedding_c(input_ids_c)
-        x_c = self.positional_encoding_c(token_embed_c)
-        padding_mask_c = self.create_padding_mask(input_ids_c)
-        
-        encoder_output_c = self.transformer_encoder_c(x_c, mask=padding_mask_c)
+        if self.use_char and input_ids_c is not None:
+            c_embed = self.embedding_c(input_ids_c)
+            c_x = self.positional_encoding_c(c_embed)
+            c_mask = self.create_padding_mask(input_ids_c)
+            c_out = self.transformer_encoder_c(c_x, mask=c_mask)
 
-        if self.clf_norm == 'pool' :
-            max_output_c = encoder_output_c.max(dim=1).values
-            avg_output_c = encoder_output_c.mean(dim=1)
-            cls_output_c = torch.cat((max_output_c, avg_output_c), dim=1)
-        else :
-            cls_output_c = encoder_output_c[:, 0, :]
+            # print(f"c_x shape: {c_x.shape}") # 예상: [128, 77, 256]
+            # print(f"c_mask shape: {c_mask.shape}") # 예상: [128, 77]
 
-        combined_output = torch.cat((cls_output_t, cls_output_c), dim=1)
+            if self.clf_norm == 'pool':
+                # Max pool + Mean pool (d_model * 2)
+                c_feat = torch.cat([c_out.max(dim=1).values, c_out.mean(dim=1)], dim=1)
+            else:
+                # CLS Token (d_model * 1)
+                c_feat = c_out[:, 0, :]
+            features.append(c_feat)
+
+        combined_output = torch.cat(features, dim=1) if len(features) > 1 else features[0]
+
+        # # 디버깅용 출력 (한 번만 확인하고 지우셔도 됩니다)
+        # if not hasattr(self, '_size_checked'):
+        #     print(f"DEBUG: Combined output shape: {combined_output.shape}")
+        #     print(f"DEBUG: Head input_dim: {self.classifier_head.dense1.in_features}")
+        #     self._size_checked = True
+
+        return self.classifier_head(combined_output)
+    
+    def set_backbone_freezing(self, freeze=True):
+        """Backbone의 학습 여부를 외부에서 조절하는 함수"""
+        trainable = not freeze
         
-        logits = self.classifier_head(combined_output)
-        return logits
+        if self.use_token:
+            for p in self.transformer_encoder_t.parameters(): p.requires_grad = trainable
+            for p in self.embedding_t.parameters(): p.requires_grad = trainable
+            for p in self.positional_encoding_t.parameters(): p.requires_grad = trainable
+
+        if self.use_char:
+            for p in self.transformer_encoder_c.parameters(): p.requires_grad = trainable
+            for p in self.embedding_c.parameters(): p.requires_grad = trainable
+            for p in self.positional_encoding_c.parameters(): p.requires_grad = trainable
+            
+        status = "고정(Frozen)" if freeze else "해제(Unfrozen)"
+        print(f"--- Backbone이 {status} 상태로 변경되었습니다. ---")

@@ -1,7 +1,7 @@
 import polars as pl
 import argparse
 import glob
-from pathlib import path as Path
+from pathlib import Path
 from utility.config import PretrainConfig
 from tokenizers import (
     Tokenizer,
@@ -31,7 +31,7 @@ def train(df: pl.DataFrame,
         vocab_size: int,
         min_freq: int,
         max_len: int,
-        tokenizer_path: str | Path = "artifacts/tokenizer-{min_freq}-{vocab_size}.json",
+        tokenizer_path: str | Path = "artifacts/tokenizer/tokenizer-{min_freq}-{vocab_size}.json",
         use_bert_pretokenizer: bool = False,
     ) -> Tokenizer:
 
