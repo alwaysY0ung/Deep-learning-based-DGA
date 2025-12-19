@@ -13,5 +13,5 @@ path_model.mkdir(exist_ok=True, parents=True)
 # path_dir_model = path_dir_root.joinpath(f'Transformer/model')
 # path_dir_model.mkdir(exist_ok=True, parents=True)
 
-# path_dir_figure = path_dir_root.joinpath(f'figure')
-# path_dir_figure.mkdir(exist_ok=True, parents=True)
+path_figure = path_dir_root.joinpath(f'figure')
+path_figure.mkdir(exist_ok=True, parents=True)

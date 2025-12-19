@@ -31,3 +31,5 @@ Tokenizer/tokenizer_analysis*.*
 Tokenizer/tokenizer_example*.*
 Tokenizer/tokenizer_year.py
 Tokenizer/tokenizer-*.json
+
+figure/
