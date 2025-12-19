@@ -3,9 +3,9 @@ pl.Config.set_engine_affinity(engine="streaming")
 
 def get_train_set_pretrain() :
     files = [
-        'dataset/period_data_no_underscore/T17_benign',
-        'dataset/period_data_no_underscore/T18_benign',
-        'dataset/period_data_no_underscore/T19_benign',
+        'dataset/period_data_no_underscore/T17_benign.parquet',
+        'dataset/period_data_no_underscore/T18_benign.parquet',
+        'dataset/period_data_no_underscore/T19_benign.parquet',
     ]
 
     return pl.read_parquet(files).unique()

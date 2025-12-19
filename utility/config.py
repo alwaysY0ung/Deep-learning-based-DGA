@@ -4,6 +4,7 @@ from dataclasses import dataclass
 class PretrainConfig:
     # Data
     max_len_char: int = 77
+    vocab_size_char: int = 131
     text_col: str = "domain"
     label_col: str = "label"
     
@@ -21,7 +22,7 @@ class PretrainConfig:
     dropout: float = 0.1
     
     # Training
-    batch_size: int = 512
+    batch_size: int = 128
     num_workers: int = 4
     lr: float = 1e-4
     

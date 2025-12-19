@@ -112,12 +112,13 @@ class TOVHead(nn.Module):
     
 class PretrainedModel(nn.Module) :
     def __init__(self, vocab_size, d_model, n_heads, dim_feedforward, 
-                 num_layers, max_len, dropout=0.1, padding_idx=0) :
+                 num_layers, max_len, dropout=0.1, padding_idx=0, tov_norm='pool') :
         super().__init__()
 
         self.d_model = d_model
         self.padding_idx = padding_idx
         self.max_len = max_len
+        self.tov_norm = tov_norm
 
         self.embedding = TokenEmbedding(vocab_size, d_model, padding_idx)
         self.positional_encoding = PositionalEncoding(d_model, max_len)
@@ -127,7 +128,7 @@ class PretrainedModel(nn.Module) :
 
         self.tpp_head = TPPHead(d_model, vocab_size)
 
-        self.tov_head = TOVHead(d_model, num_classes=2, dropout=dropout)
+        self.tov_head = TOVHead(d_model, num_classes=2, dropout=dropout, tov_norm=self.tov_norm)
 
     def create_padding_mask(self, input_ids):
         return (input_ids == self.padding_idx)
@@ -140,19 +141,19 @@ class PretrainedModel(nn.Module) :
 
         outputs = {}
 
-        # Task 1: MLM
+        # Task 1: MTP
         if task_type == 'MTP' or task_type == 'ALL':
-            outputs['mlm_logits'] = self.mtp_head(encoder_output)
+            outputs['mtp_logits'] = self.mtp_head(encoder_output)
             
-        # Task 2: 바뀐 순서 예측
-        if task_type == 'TTP' or task_type == 'ALL':
-            outputs['perm_logits'] = self.tpp_head(encoder_output)
+        # Task 2: TTP
+        if task_type == 'TPP' or task_type == 'ALL':
+            outputs['ttp_logits'] = self.tpp_head(encoder_output)
             
-        # Task 3: 섞임/안 섞임 예측
+        # Task 3: TOV
         if task_type == 'TOV' or task_type == 'ALL':
-            outputs['binary_logits'] = self.tov_head(encoder_output)
+            outputs['tov_logits'] = self.tov_head(encoder_output)
 
-        # 단일 태스크를 요구했을 경우, dict 대신 로짓 텐서 자체를 반환
+        # 단일 태스크를 요구했을 경우 dict 대신 로짓 텐서 자체를 반환
         if len(outputs) == 1 and task_type != 'ALL':
             return list(outputs.values())[0]
             
@@ -160,13 +161,13 @@ class PretrainedModel(nn.Module) :
 
 
 class FinetuningHead(nn.Module) :
-    def __init__(self, d_model, dropout, tov_norm = 'pool') :
+    def __init__(self, d_model, dropout, clf_norm = 'pool') :
         super().__init__()
 
         self.d_model = d_model
-        self.tov_norm = tov_norm
+        self.clf_norm = clf_norm
 
-        if tov_norm == "pool" :
+        if clf_norm == "pool" :
             self.dense1 = nn.Linear(d_model * 4, d_model * 2)
         else :
             self.dense1 = nn.Linear(d_model * 2, d_model * 2)
@@ -184,11 +185,11 @@ class FinetuningHead(nn.Module) :
         return logits
     
 class FineTuningModel(nn.Module):
-    def __init__(self, pretrain_model_t, pretrain_model_c, dropout=0.1, padding_idx=0, tov_norm = 'pool'):
+    def __init__(self, pretrain_model_t, pretrain_model_c, dropout=0.1, padding_idx=0, clf_norm = 'pool'):
         super().__init__()
 
         self.padding_idx = padding_idx
-        self.tov_norm = tov_norm
+        self.clf_norm = clf_norm
 
         # --- Token Path Components ---
         # load_pretrain(pretrain_model_t)
@@ -206,7 +207,7 @@ class FineTuningModel(nn.Module):
         self.classifier_head = FinetuningHead(
             d_model=pretrain_model_t.d_model,
             dropout=dropout,
-            tov_norm=tov_norm
+            clf_norm=self.clf_norm
         )
 
     def create_padding_mask(self, input_ids):
@@ -221,7 +222,7 @@ class FineTuningModel(nn.Module):
         
         encoder_output_t = self.transformer_encoder_t(x_t, mask=padding_mask_t)
 
-        if self.tov_norm == 'pool' :
+        if self.clf_norm == 'pool' :
             max_output_t = encoder_output_t.max(dim=1).values
             avg_output_t = encoder_output_t.mean(dim=1)
             cls_output_t = torch.cat((max_output_t, avg_output_t), dim=1)
@@ -235,7 +236,7 @@ class FineTuningModel(nn.Module):
         
         encoder_output_c = self.transformer_encoder_c(x_c, mask=padding_mask_c)
 
-        if self.tov_norm == 'pool' :
+        if self.clf_norm == 'pool' :
             max_output_c = encoder_output_c.max(dim=1).values
             avg_output_c = encoder_output_c.mean(dim=1)
             cls_output_c = torch.cat((max_output_c, avg_output_c), dim=1)
