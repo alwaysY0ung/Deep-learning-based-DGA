@@ -1,8 +1,3 @@
-import warnings
-warnings.filterwarnings(
-    "ignore",
-    message="The PyTorch API of nested tensors is in prototype stage"
-)
 import argparse
 import polars as pl
 pl.Config.set_engine_affinity(engine="streaming")
@@ -24,7 +19,7 @@ from utility.config import PretrainConfig
 from utility.path import path_dga_scheme, path_model,path_tokenizer, path_figure 
 
 
-def compute_metrics(y_true, y_pred, has_positive):
+def compute_metrics(y_true, y_pred):
     metrics = {}
 
     accuracy = (y_true == y_pred).float().mean().item()
@@ -51,7 +46,7 @@ def compute_metrics(y_true, y_pred, has_positive):
     return metrics
 
 
-def test_finetuning(model, device, test_dataloader, has_positive):
+def test_finetuning(model, device, test_dataloader):
     model.eval()
     all_preds, all_labels = [], []
 
@@ -70,14 +65,13 @@ def test_finetuning(model, device, test_dataloader, has_positive):
     all_preds = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
 
-    metrics = compute_metrics(all_labels, all_preds, has_positive)
+    metrics = compute_metrics(all_labels, all_preds)
 
     return metrics, all_preds, all_labels
 
 
 def test_by_year(cfg, args, model, tokenizer, device):
-    # years = [20, 21, 22, 23, 24, 25]
-    years = [20, 21]
+    years = [20, 21, 22, 23, 24, 25]
 
     acc_all, pre_all, rec_all, f1_all, fpr_all, fnr_all = [], [], [], [], [], []
     year_str = []
@@ -89,7 +83,6 @@ def test_by_year(cfg, args, model, tokenizer, device):
     for year in years:
         if year in [24, 25]:
             test_df = get_test_set_24() if year == 24 else get_test_set_25()
-            has_positive = False
         else:
             test_df = (
                 get_test_set_20() if year == 20 else
@@ -97,7 +90,6 @@ def test_by_year(cfg, args, model, tokenizer, device):
                 get_test_set_22() if year == 22 else
                 get_test_set_23()
             )
-            has_positive = True
 
         dataset = FineTuningDataset(
             test_df,
@@ -117,29 +109,27 @@ def test_by_year(cfg, args, model, tokenizer, device):
         test_loop = tqdm(dataloader, desc='[Test by year]', bar_format='{l_bar}{r_bar}', leave=False)
 
         metrics, preds, labels = test_finetuning(
-            model, device, test_loop, has_positive
+            model, device, test_loop
         )
 
         # ===== 출력 =====
         print(f"\nTesting data for 20{year}")
-        print(f"Accuracy: {metrics['accuracy']:.4f}, FPR: {metrics['fpr']:.4f}")
-
-        if has_positive:
-            print(
-                f"Precision: {metrics['precision']:.4f}, "
-                f"Recall: {metrics['recall']:.4f}, "
-                f"F1: {metrics['f1']:.4f}, "
-                f"FNR: {metrics['fnr']:.4f}"
-            )
+        print(
+            f"Accuracy: {metrics['accuracy']:.4f}, "
+            f"Precision: {metrics['precision']:.4f}, "
+            f"Recall: {metrics['recall']:.4f}, "
+            f"F1: {metrics['f1']:.4f}, "
+            f"FPR: {metrics['fpr']:.4f}, FNR: {metrics['fnr']:.4f}"
+        )
 
         if args.use_wandb:
             log_dict = {
                 f"Year/{year}/Accuracy": metrics["accuracy"],
-                f"Year/{year}/FPR": metrics["fpr"],
-                f"Year/{year}/FNR": metrics["fnr"],
                 f"Year/{year}/Precision": metrics["precision"],
                 f"Year/{year}/Recall": metrics["recall"],
                 f"Year/{year}/F1": metrics["f1"],
+                f"Year/{year}/FPR": metrics["fpr"],
+                f"Year/{year}/FNR": metrics["fnr"],
             }
             wandb.log(log_dict)
 
@@ -165,8 +155,8 @@ def test_by_year(cfg, args, model, tokenizer, device):
         "FNR": fnr_all
     })
 
-    # save_path = path_figure.joinpath("test_by_year.csv")
-    # df.write_csv(save_path)
+    save_path = path_figure.joinpath("test_by_year.csv")
+    df.write_csv(save_path)
     print("\n===== Year-wise Results =====")
     print(df)
 
@@ -174,7 +164,7 @@ def test_by_year(cfg, args, model, tokenizer, device):
     global_preds = torch.cat(global_preds)
     global_labels = torch.cat(global_labels)
 
-    global_metrics = compute_metrics(global_labels, global_preds, has_positive=True)
+    global_metrics = compute_metrics(global_labels, global_preds)
     print("\n===== Overall Metrics =====")
     print(
         f"[Overall] "
@@ -238,8 +228,7 @@ def test_by_family(cfg, args, model, tokenizer, device):
         metrics, _, _ = test_finetuning(
             model,
             device,
-            test_loop,
-            has_positive=True
+            test_loop
         )
 
         acc_all.append(metrics["accuracy"])
@@ -290,8 +279,8 @@ def test_by_family(cfg, args, model, tokenizer, device):
     print("\n===== Family-wise Results =====")
     print(results_df)
 
-    # save_path = path_figure.joinpath("test_by_family.csv")
-    # results_df.write_csv(save_path)
+    save_path = path_figure.joinpath("test_by_family.csv")
+    results_df.write_csv(save_path)
 
 
 def main() :

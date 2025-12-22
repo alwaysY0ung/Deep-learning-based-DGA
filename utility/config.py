@@ -47,7 +47,7 @@ def get_wandb_mode():
 
 @dataclass
 class FinetuningConfig:
-    token_weights_path: str = 'token_model_1201_0008.pt'
+    token_weights_path: str = '1219_1951_subword_step_2757000.pt'
     char_weights_path: str = 'char_model_1130_2114_step_1160.pt'
     tokenizer_path: str = "tokenizer-0-30522-both.json"
 

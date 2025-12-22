@@ -1,9 +1,7 @@
 import torch
 from torch.utils.data import Dataset
 import numpy as np
-import polars as pl
 import random
-from transformers import AutoTokenizer
 
 
 class SpecialIDs:
@@ -146,13 +144,13 @@ class SubTaskDataset(Dataset) :
         domain, _ = self.df.row(idx)
         X_ori = self.domain_to_token(domain)
 
-        # 1. MLM 데이터 생성
+        # 1. MTP 데이터 생성
         X_mtp, Y_mtp = self.mtp(X_ori)
         
-        # 2. PERMUTATION 데이터 생성
+        # 2. TPP 데이터 생성
         X_tpp, Y_tpp = self.tpp(X_ori)
         
-        # 3. BINARY_CLF 데이터 생성
+        # 3. TOV 데이터 생성
         X_tov, Y_tov = self.tov(X_ori)
         
 
