@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 import math
-from torchinfo import summary
 
 class TokenEmbedding(nn.Module):
     def __init__(self, vocab_size, d_model, padding_idx) :
@@ -42,11 +41,15 @@ class Transformer(nn.Module) :
             dropout=dropout,
             batch_first=True
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers)
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers, enable_nested_tensor=False)
         self.dropout = nn.Dropout(dropout)   
 
     def forward(self, x, mask=None) :
-        return self.dropout(self.encoder(x, src_key_padding_mask=mask))
+        if mask is not None and mask.any():
+            out = self.encoder(x, src_key_padding_mask=mask)
+        else:
+            out = self.encoder(x)
+        return self.dropout(out)
     
 class MTPHead(nn.Module) :
     def __init__(self, d_model, vocab_size, dropout=0.1) :
