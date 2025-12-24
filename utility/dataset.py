@@ -6,6 +6,9 @@ def get_train_set_pretrain() :
         'dataset/period_data_no_underscore/T17_benign.parquet',
         'dataset/period_data_no_underscore/T18_benign.parquet',
         'dataset/period_data_no_underscore/T19_benign.parquet',
+        'dataset/period_data_no_underscore/T17_dga.parquet',
+        'dataset/period_data_no_underscore/T18_dga.parquet',
+        'dataset/period_data_no_underscore/T19_dga.parquet',
     ]
 
     return pl.read_parquet(files).unique()
