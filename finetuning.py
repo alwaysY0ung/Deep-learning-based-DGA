@@ -209,6 +209,7 @@ def main():
 
     # 경로
     parser.add_argument("--tokenizer_path", type=str, default=cfg.tokenizer_path)
+    parser.add_argument("--use_bert_pretokenizer", type=bool, default=False)
     parser.add_argument("--project_name", type=str, default=cfg.project_name)
     parser.add_argument("--best_filename", type=str, default=cfg.best_filename)
     parser.add_argument("--wandb_mode", type=str, default=cfg.wandb_mode)
@@ -245,8 +246,11 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # 토크나이저 & 경로 & 완디비
-    tokenizer_m = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(args.tokenizer_path)))
-    vocab_size_token = tokenizer_m.vocab_size
+    if args.use_bert_pretokenizer :
+        tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased', use_fast=True)
+    else :
+        tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(args.tokenizer_path)))
+    vocab_size_token = tokenizer.vocab_size
 
     save_dir = path_model.joinpath(args.timestamp)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -259,9 +263,9 @@ def main():
     train_df = dataset.get_train_set()
     val_df = dataset.get_val_set()
 
-    train_dataset = FineTuningDataset(train_df, tokenizer=tokenizer_m, 
+    train_dataset = FineTuningDataset(train_df, tokenizer=tokenizer, 
                                       max_len_t=args.max_len_token, max_len_c=args.max_len_char)
-    val_dataset = FineTuningDataset(val_df, tokenizer=tokenizer_m, 
+    val_dataset = FineTuningDataset(val_df, tokenizer=tokenizer, 
                                     max_len_t=args.max_len_token, max_len_c=args.max_len_char)
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, 
