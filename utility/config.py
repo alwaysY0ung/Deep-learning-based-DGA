@@ -70,7 +70,7 @@ class FinetuningConfig:
     # Ablation Study / Training Strategy
     use_token: bool = True       # Token Backbone 사용 여부
     use_char: bool = True        # Char Backbone 사용 여부
-    freeze_backbone: bool = True # Backbone 고정 여부 (True면 Head만 학습)
+    freeze_backbone: bool = False # Backbone 고정 여부 (True면 Head만 학습)
 
     # Logging & Project
     project_name: str = 'proposal'

@@ -17,6 +17,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from utility import dataset
 from utility.path import path_tokenizer, path_model
 from utility.config import FinetuningConfig
+import argparse
 
 def load_pretrain_weights(pt_model, weigths_path, device) :
     state_dict = torch.load(weigths_path, map_location=device)
@@ -203,65 +204,99 @@ def evaluate_finetuning(model, dataloader, device):
 
 def main():
     cfg = FinetuningConfig()
+
+    parser = argparse.ArgumentParser(description="Fine-tuning DGA Classifier")
+
+    # 경로
+    parser.add_argument("--tokenizer_path", type=str, default=cfg.tokenizer_path)
+    parser.add_argument("--project_name", type=str, default=cfg.project_name)
+    parser.add_argument("--best_filename", type=str, default=cfg.best_filename)
+    parser.add_argument("--wandb_mode", type=str, default=cfg.wandb_mode)
+    parser.add_argument("--timestamp", type=str, default=cfg.timestamp)
+
+    # 모델 구조 관련
+    parser.add_argument("--d_model", type=int, default=cfg.d_model)
+    parser.add_argument("--nhead", type=int, default=cfg.nhead)
+    parser.add_argument("--dim_feedforward", type=int, default=cfg.dim_feedforward)
+    parser.add_argument("--num_layers", type=int, default=cfg.num_layers)
+    parser.add_argument("--max_len_token", type=int, default=cfg.max_len_token)
+    parser.add_argument("--max_len_char", type=int, default=cfg.max_len_char)
+    parser.add_argument("--vocab_size_char", type=int, default=cfg.vocab_size_char)
+
+    # 학습 하이퍼파라미터
+    parser.add_argument("--batch_size", type=int, default=cfg.batch_size)
+    parser.add_argument("--num_workers", type=int, default=cfg.num_workers)
+    parser.add_argument("--num_epochs", type=int, default=cfg.num_epochs)
+    parser.add_argument("--learning_rate", type=float, default=cfg.learning_rate)
+    parser.add_argument("--backbone_lr", type=float, default=cfg.backbone_lr)
+    parser.add_argument("--log_interval_steps", type=int, default=cfg.log_interval_steps)
+
+    # 플래그
+    parser.add_argument("--use_token", action="store_true", default=cfg.use_token)
+    parser.add_argument("--use_char", action="store_true", default=cfg.use_char)
+    parser.add_argument("--freeze_backbone", action="store_true", default=cfg.freeze_backbone)
+
+    # 가중치
+    parser.add_argument("--token_weights_path", type=str, default=cfg.token_weights_path)
+    parser.add_argument("--char_weights_path", type=str, default=cfg.char_weights_path)
+
+    args = parser.parse_args()
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    tokenizer_m = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(cfg.tokenizer_path)))
-    cfg.vocab_size_token = tokenizer_m.vocab_size
+    # 토크나이저 & 경로 & 완디비
+    tokenizer_m = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(args.tokenizer_path)))
+    vocab_size_token = tokenizer_m.vocab_size
 
-    save_dir = path_model.joinpath(cfg.timestamp)
+    save_dir = path_model.joinpath(args.timestamp)
     save_dir.mkdir(parents=True, exist_ok=True)
-    best_model_path = save_dir.joinpath(f"{cfg.best_filename}.pt")
+    best_model_path = save_dir.joinpath(f"{args.best_filename}.pt")
 
-    wandb.init(project=cfg.project_name, name=cfg.best_filename, 
-               config=cfg.__dict__, mode=cfg.wandb_mode, tags=['valid'])
+    wandb.init(project=args.project_name, name=args.best_filename, 
+               config=vars(args), mode=args.wandb_mode, tags=['valid'])
 
+    # 데이터셋
     train_df = dataset.get_train_set()
     val_df = dataset.get_val_set()
 
     train_dataset = FineTuningDataset(train_df, tokenizer=tokenizer_m, 
-                                      max_len_t=cfg.max_len_token, max_len_c=cfg.max_len_char)
+                                      max_len_t=args.max_len_token, max_len_c=args.max_len_char)
     val_dataset = FineTuningDataset(val_df, tokenizer=tokenizer_m, 
-                                    max_len_t=cfg.max_len_token, max_len_c=cfg.max_len_char)
+                                    max_len_t=args.max_len_token, max_len_c=args.max_len_char)
 
-    train_dataloader = DataLoader(train_dataset, batch_size=cfg.batch_size, 
-                                  shuffle=True, num_workers=cfg.num_workers)
-    val_dataloader = DataLoader(val_dataset, batch_size=cfg.batch_size, 
-                                shuffle=False, num_workers=cfg.num_workers)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, 
+                                  shuffle=True, num_workers=args.num_workers)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, 
+                                shuffle=False, num_workers=args.num_workers)
 
-    pt_model_t = PretrainedModel(vocab_size=cfg.vocab_size_token, d_model=cfg.d_model, 
-                                 n_heads=cfg.nhead, dim_feedforward=cfg.dim_feedforward, 
-                                 num_layers=cfg.num_layers, max_len=cfg.max_len_token)
-    pt_model_c = PretrainedModel(vocab_size=cfg.vocab_size_char, d_model=cfg.d_model, 
-                                 n_heads=cfg.nhead, dim_feedforward=cfg.dim_feedforward, 
-                                 num_layers=cfg.num_layers, max_len=cfg.max_len_char)
+    pt_model_t = PretrainedModel(vocab_size=vocab_size_token, d_model=args.d_model, 
+                                 n_heads=args.nhead, dim_feedforward=args.dim_feedforward, 
+                                 num_layers=args.num_layers, max_len=args.max_len_token)
+    pt_model_c = PretrainedModel(vocab_size=args.vocab_size_char, d_model=args.d_model, 
+                                 n_heads=args.nhead, dim_feedforward=args.dim_feedforward, 
+                                 num_layers=args.num_layers, max_len=args.max_len_char)
     
-    save_dir = path_model.joinpath(cfg.timestamp)
-    save_dir.mkdir(parents=True, exist_ok=True)
-    best_model_path = save_dir.joinpath(f"{cfg.best_filename}.pt")
-
-    wandb.init(project=cfg.project_name, name=cfg.best_filename, 
-               config=cfg.__dict__, mode='online', tags=['valid'])
-    
+    # 학습 실행
     fine_tune_dga_classifier(
         pt_model_t,
         pt_model_c,
         train_dataloader,
         val_dataloader,
-        weights_path_t=path_model.joinpath(cfg.token_weights_path),
-        weights_path_c=path_model.joinpath(cfg.char_weights_path),
+        weights_path_t=path_model.joinpath(args.token_weights_path),
+        weights_path_c=path_model.joinpath(args.char_weights_path),
         device=device,
-        num_epochs=cfg.num_epochs,
-        log_interval_steps=cfg.log_interval_steps,
+        num_epochs=args.num_epochs,
+        log_interval_steps=args.log_interval_steps,
         save_path=best_model_path,
-        use_token=cfg.use_token,
-        use_char=cfg.use_char,
-        freeze_backbone=cfg.freeze_backbone,
-        learning_rate=cfg.learning_rate,
-        backbone_lr=cfg.backbone_lr
+        use_token=args.use_token,
+        use_char=args.use_char,
+        freeze_backbone=args.freeze_backbone,
+        learning_rate=args.learning_rate,
+        backbone_lr=args.backbone_lr
     )
     
     if best_model_path.exists():
-        artifact = wandb.Artifact(name=cfg.best_filename, type="model")
+        artifact = wandb.Artifact(name=args.best_filename, type="model")
         artifact.add_file(str(best_model_path))
         wandb.log_artifact(artifact)
 
