@@ -47,8 +47,8 @@ def get_wandb_mode():
 
 @dataclass
 class FinetuningConfig:
-    token_weights_path: str = '1219_1951_subword_step_2757000.pt'
-    char_weights_path: str = 'char_model_1130_2114_step_1160.pt'
+    token_weights_path: str = '1224_1609_subword_step_2046000.pt'
+    char_weights_path: str = '1226_1655_char_step_3098000.pt'
     tokenizer_path: str = "tokenizer-0-30522-both.json"
 
     d_model: int = 256
@@ -60,12 +60,13 @@ class FinetuningConfig:
     vocab_size_token: int = 30522 # tokenizer_m.vocab_size
     vocab_size_char: int = 43
 
-    num_epochs: int = 5
+    num_epochs: int = 100
     batch_size: int = 128
     learning_rate: float = 1e-4
     backbone_lr: float = 1e-6
     num_workers: int = 4
     log_interval_steps: int = 1000
+    unfreeze_at_epoch: float = 0.5
 
     # Ablation Study / Training Strategy
     use_token: bool = True       # Token Backbone 사용 여부
@@ -73,7 +74,7 @@ class FinetuningConfig:
     freeze_backbone: bool = False # Backbone 고정 여부 (True면 Head만 학습)
 
     # Logging & Project
-    project_name: str = 'proposal'
+    project_name: str = 'drift-finetune'
     wandb_mode: str = field(default_factory=get_wandb_mode)
     run_name_prefix: str = 'finetuning'
     timestamp: str = field(default_factory=lambda: datetime.datetime.now().strftime('%m%d_%H%M'))

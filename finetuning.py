@@ -52,8 +52,12 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
     optimizer = optim.Adam(trainable_params, lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
 
-    unfreeze_step = int(len(train_dataloader) * unfreeze_at_epoch) if unfreeze_at_epoch is not None else float('inf')
-    backbone_unfrozen = False
+    if not freeze_backbone:
+        unfreeze_step = int(len(train_dataloader) * unfreeze_at_epoch) if unfreeze_at_epoch is not None else float('inf')
+        backbone_unfrozen = False
+    else:
+        unfreeze_step = None
+        backbone_unfrozen = True
     best_val_loss = float('inf')
     global_step = 0 # 전체 스텝 카운터
     
@@ -70,7 +74,7 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
         for X_token, X_char, y_train in train_loop :
             global_step += 1
 
-            if unfreeze_at_epoch is not None and not backbone_unfrozen and global_step >= unfreeze_step:
+            if freeze_backbone is not True and unfreeze_at_epoch is not None and not backbone_unfrozen and global_step >= unfreeze_step:
                 for param in ft_model.parameters(): # 모든 파라미터 해제
                     param.requires_grad = True
                 
@@ -121,15 +125,14 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
                     avg_val_loss, val_acc, val_precision, val_recall, val_f1 = evaluate_finetuning(ft_model, val_dataloader, device)
 
                     wandb.log({
-                        'step': global_step,
-                        'interval_train_loss' : avg_total_interval_loss,
-                        'val_loss': avg_val_loss,
-                        'val_accuracy' : val_acc,
-                        'val_precision': val_precision,
-                        'val_recall' : val_recall,
-                        'val_f1': val_f1,
-                        'learning_rate': current_lr
-                    })
+                        'train/loss' : avg_total_interval_loss,
+                        'val/loss': avg_val_loss,
+                        'val/acc' : val_acc,
+                        'val/prec': val_precision,
+                        'val/recall' : val_recall,
+                        'val/f1': val_f1,
+                        'train/lr': current_lr
+                    }, step=global_step)
 
                     if avg_val_loss < best_val_loss:
                         best_val_loss = avg_val_loss
@@ -139,10 +142,9 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
                         f"Val Precision: {val_precision:.4f}, Val Recall: {val_recall:.4f}, Val F1: {val_f1:.4f}")
                 else :
                     wandb.log({
-                        'step': global_step,
-                        'interval_train_loss' : avg_total_interval_loss,
-                        'learning_rate': current_lr
-                    })
+                        'train/loss' : avg_total_interval_loss,
+                        'train/lr': current_lr
+                    }, step=global_step)
 
                 interval_loss_sum_total = 0 
                 interval_batch_counter = 0
@@ -151,9 +153,6 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
             avg_total = total_loss / current_step
 
             train_loop.set_postfix(avg_loss=f'{avg_total:.4f}', refresh=False)
-
-            if global_step % 20000 == 0:
-                break
 
 def evaluate_finetuning(model, dataloader, device):
     model.eval()
@@ -258,6 +257,9 @@ def main():
 
     wandb.init(project=args.project_name, name=args.best_filename, 
                config=vars(args), mode=args.wandb_mode, tags=['valid'])
+               
+    wandb.define_metric("train/*", step_metric="global_step")
+    wandb.define_metric("val/*", step_metric="global_step")
 
     # 데이터셋
     train_df = dataset.get_train_set()

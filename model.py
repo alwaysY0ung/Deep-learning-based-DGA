@@ -184,7 +184,7 @@ class FinetuningHead(nn.Module) :
     
 class FineTuningModel(nn.Module):
     def __init__(self, pretrain_model_t=None, pretrain_model_c=None,
-                 dropout=0.1, padding_idx=0, clf_norm = 'pool', freeze_backbone=True):
+                 dropout=0.1, padding_idx=0, clf_norm = 'pool', freeze_backbone=False):
         super().__init__()
 
         self.padding_idx = padding_idx
@@ -205,7 +205,7 @@ class FineTuningModel(nn.Module):
             self.transformer_encoder_t = pretrain_model_t.transformer
             self.embedding_t = pretrain_model_t.embedding
             self.positional_encoding_t = pretrain_model_t.positional_encoding
-            if freeze_backbone: # full finetuing
+            if freeze_backbone:
                 self._set_grad(self.transformer_encoder_t, False)
                 self._set_grad(self.embedding_t, False)
                 self._set_grad(self.positional_encoding_t, False)

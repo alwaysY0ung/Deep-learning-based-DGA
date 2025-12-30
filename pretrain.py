@@ -335,7 +335,7 @@ def main() :
    parser.add_argument("--total_steps", type=int, default=10000000, help="Total training steps")
    parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging")
    parser.add_argument("--log_interval", type=int, default=1000, help="Steps between logging")
-   parser.add_argument("--project_name", type=str, default="proposal", help="Wandb project name")
+   parser.add_argument("--project_name", type=str, default="drift-finetune", help="Wandb project name")
    parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")
    parser.add_argument("--tov_norm", type=str, choices=["cls", "pool"], default="pool", help="TOV pooling strategy")
    parser.add_argument("--use_bert_pretokenizer", type=bool, default=False, help="Use BERT pretokenizer")
