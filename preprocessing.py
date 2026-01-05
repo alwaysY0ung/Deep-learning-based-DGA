@@ -53,8 +53,7 @@ def tpp_dataset(inputs, special_ids, ignore_idx=-100) :
     return shuffled_inputs, labels
 
 
-def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5) :
-    ids = [special_ids.cls_id]
+def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5, tov_norm='pool') :
     non_padding_indices = np.where(inputs != special_ids.pad_id)[0]
     processed_inputs = np.copy(inputs)
 
@@ -78,7 +77,11 @@ def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5) :
     if len(pure_tokens) > max_len - 1:
         pure_tokens = pure_tokens[:max_len - 1]
 
-    ids.extend(pure_tokens)
+    if tov_norm == 'cls' :
+        ids = [special_ids.cls_id]
+        ids.extend(pure_tokens)
+    elif tov_norm == 'pool' :
+        ids = pure_tokens
 
     if len(ids) < max_len:
         ids += [special_ids.pad_id] * (max_len - len(ids))
@@ -88,7 +91,7 @@ def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5) :
 
 class SubTaskDataset(Dataset) :
     def __init__(self, df, domain_col='domain', label_col='label', max_len=77, mask_ratio=0.15, ignore_idx=-100, shuffle_prob = 0.5,
-                tokenizer=None, special_ids=SpecialIDs, type='char'):
+                tokenizer=None, special_ids=SpecialIDs, type='char', tov_norm='pool'):
         self.df = df
         self.domain_col = domain_col
         self.label_col = label_col
@@ -102,6 +105,7 @@ class SubTaskDataset(Dataset) :
         self.mask_idx = special_ids.mask_id
         self.cls_idx = special_ids.cls_id
         self.type = type
+        self.tov_norm = tov_norm
         if self.type == 'char' :
             self.char_list = list("abcdefghijklmnopqrstuvwxyz0123456789-.")
             self.special_tokens = ['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[MASK]']
@@ -135,7 +139,7 @@ class SubTaskDataset(Dataset) :
         return tpp_dataset(inputs, self.special_ids, self.ignore_idx)
 
     def tov(self, inputs) :
-        return tov_dataset(inputs, self.special_ids, self.max_len, self.shuffle_prob)
+        return tov_dataset(inputs, self.special_ids, self.max_len, self.shuffle_prob, self.tov_norm)
 
     def __len__(self):
         return self.df.shape[0]
@@ -164,13 +168,14 @@ class SubTaskDataset(Dataset) :
   
     
 class FineTuningDataset(Dataset) :
-    def __init__(self, df, domain_col='domain', label_col='label', special_ids=SpecialIDs, max_len_t=30, max_len_c=77, tokenizer=None):
+    def __init__(self, df, domain_col='domain', label_col='label', special_ids=SpecialIDs, max_len_t=30, max_len_c=77, tokenizer=None, clf_norm='pool'):
         self.df = df
         self.domain_col = domain_col
         self.label_col = label_col
         self.max_len_t = max_len_t
         self.max_len_c = max_len_c
         self.tokenizer = tokenizer
+        self.clf_norm = clf_norm
         if tokenizer == None :
             raise ValueError("Tokenizer must be required.")
         self.special_ids = special_ids
@@ -179,13 +184,11 @@ class FineTuningDataset(Dataset) :
         self.mask_idx = special_ids.mask_id
         self.cls_idx = special_ids.cls_id
         self.char_list = list("abcdefghijklmnopqrstuvwxyz0123456789-.")
-        self.special_tokens = ['[PAD]', '[UNK]', '[SEP]', '[CLS]', '[MASK]']
+        self.special_tokens = ['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[MASK]']
         self.all_tokens = self.special_tokens + self.char_list
 
         self.char2id = {char: idx for idx, char in enumerate(self.all_tokens)}
         self.id2char = {idx: char for idx, char in enumerate(self.all_tokens)}
-
-        self.ids = [self.cls_idx]
 
     def domain_to_ids(self, domain):
         domain = domain.lower()
@@ -195,12 +198,16 @@ class FineTuningDataset(Dataset) :
         if len(token_indices) > self.max_len_c - 1:
             token_indices = token_indices[:self.max_len_c - 1]
 
-        self.ids.extend(token_indices)
+        if self.clf_norm == 'cls' :
+            ids = [self.cls_idx]
+            ids.extend(token_indices)
+        elif self.clf_norm == 'pool' :
+            ids = token_indices
 
-        if len(token_indices) < self.max_len_c:
-            token_indices += [self.pad_idx] * (self.max_len_c - len(token_indices))
+        if len(ids) < self.max_len_c:
+            ids += [self.pad_idx] * (self.max_len_c - len(ids))
             
-        return np.array(token_indices, dtype=np.int64)
+        return np.array(ids, dtype=np.int64)
     
     def domain_to_token(self, domain) :
         domain = domain.lower()
@@ -210,12 +217,16 @@ class FineTuningDataset(Dataset) :
         if len(token_indices) > self.max_len_t - 1:
             token_indices = token_indices[:self.max_len_t - 1]
 
-        self.ids.extend(token_indices)
+        if self.clf_norm == 'cls' :
+            ids = [self.cls_idx]
+            ids.extend(token_indices)
+        elif self.clf_norm == 'pool' :
+            ids = token_indices
 
-        if len(token_indices) < self.max_len_t:
-            token_indices += [self.pad_idx] * (self.max_len_t - len(token_indices))
+        if len(ids) < self.max_len_t:
+            ids += [self.pad_idx] * (self.max_len_t - len(ids))
         
-        return np.array(token_indices, dtype=np.int64)
+        return np.array(ids, dtype=np.int64)
     
     def __len__(self):
         return self.df.shape[0]

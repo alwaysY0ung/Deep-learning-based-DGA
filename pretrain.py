@@ -12,7 +12,7 @@ from model import PretrainedModel
 from tqdm import tqdm
 import datetime
 import wandb
-from utility.dataset import get_train_set_pretrain
+from utility.dataset import get_train_set_pretrain, get_train_set, get_val_set
 from utility.config import PretrainConfig
 from utility.path import path_model, path_tokenizer
 
@@ -32,19 +32,38 @@ def train_char(cfg, args) :
     if args.use_wandb:
         run = wandb.init(project=args.project_name, name=args.run_name, config=vars(cfg), tags=['valid'])
 
-    train_df = get_train_set_pretrain()
+    # train_df = get_train_set_pretrain()
+    train_df = get_train_set()
+    val_df = get_val_set()
 
     train_dataset = SubTaskDataset(
         train_df,
         max_len=cfg.max_len_char,
         mask_ratio=cfg.mask_ratio,
-        type = 'char'
+        type = 'char',
+        tov_norm=cfg.tov_norm,
     )
     
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
         shuffle=True,
+        num_workers=cfg.num_workers,
+        pin_memory=True,
+    )
+
+    val_dataset = SubTaskDataset(
+        val_df,
+        max_len=cfg.max_len_char,
+        mask_ratio=cfg.mask_ratio,
+        type = 'char',
+        tov_norm=cfg.tov_norm,
+    )
+
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=cfg.batch_size,
+        shuffle=False,
         num_workers=cfg.num_workers,
         pin_memory=True,
     )
@@ -147,18 +166,30 @@ def train_char(cfg, args) :
 
                 train_loop.write(f"[Step {global_step} Interval Log]: Train Loss: {avg_total_interval:.4f}")
 
-                if avg_total_interval < best_loss:
-                    best_loss = avg_total_interval
-                    save_path = path_model.joinpath(f"{now_date}_{cfg.save_path.replace('.pt', '')}_step_{global_step}.pt")
-                    torch.save(model.state_dict(), save_path)
-                    if args.use_wandb:
-                        pass
+                # if avg_total_interval < best_loss:
+                #     best_loss = avg_total_interval
+                #     save_path = path_model.joinpath(f"{now_date}_{cfg.save_path.replace('.pt', '')}_step_{global_step}.pt")
+                #     torch.save(model.state_dict(), save_path)
+                #     if args.use_wandb:
+                #         pass
                         # log_artifact(run, save_path, f"{args.mode}_{now_date}") # wandb artifact 저장 필요 시
 
                 interval_loss_sum_total = 0 
                 interval_loss_sum_mtp = 0
                 interval_loss_sum_tpp = 0
                 interval_loss_sum_tov = 0
+
+            if global_step % args.val_check_interval == 0:
+                val_loss = validate(model, val_dataloader, device, cfg, args)
+                print(f"[subword] step {global_step} val_loss={val_loss:.4f}")
+
+                if val_loss < best_loss:
+                    best_loss = val_loss
+                    save_path = path_model.joinpath(f"{now_date}_{cfg.save_path.replace('.pt', '')}_step_{global_step}.pt")
+                    torch.save(model.state_dict(), save_path)
+                    if args.use_wandb:
+                        pass
+                        # log_artifact(run, save_path, f"{args.mode}_{now_date}") # wandb artifact 저장 필요 시
 
             current_step = train_loop.n + 1
             with torch.no_grad() :
@@ -188,20 +219,40 @@ def train_subword(cfg, args) :
     else :
         tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both.json")))
 
-    train_df = get_train_set_pretrain()
+    # train_df = get_train_set_pretrain()
+    train_df = get_train_set()
+    val_df = get_val_set()
 
     train_dataset = SubTaskDataset(
         train_df,
         max_len=cfg.max_len_subword,
         tokenizer=tokenizer,
         mask_ratio=cfg.mask_ratio,
-        type = 'subword'
+        type = 'subword',
+        tov_norm=cfg.tov_norm,
     )
     
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
         shuffle=True,
+        num_workers=cfg.num_workers,
+        pin_memory=True,
+    )
+
+    val_dataset = SubTaskDataset(
+        val_df,
+        max_len=cfg.max_len_subword,
+        tokenizer=tokenizer,
+        mask_ratio=cfg.mask_ratio,
+        type = 'subword',
+        tov_norm=cfg.tov_norm,
+    )
+
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=cfg.batch_size,
+        shuffle=False,
         num_workers=cfg.num_workers,
         pin_memory=True,
     )
@@ -299,18 +350,30 @@ def train_subword(cfg, args) :
 
                 train_loop.write(f"[Step {global_step} Interval Log]: Train Loss: {avg_total_interval:.4f}")
 
-                if avg_total_interval < best_loss:
-                    best_loss = avg_total_interval
-                    save_path = path_model.joinpath(f"{now_date}_{cfg.save_path.replace('.pt', '')}_step_{global_step}.pt")
-                    torch.save(model.state_dict(), save_path)
-                    if args.use_wandb:
-                        pass
+                # if avg_total_interval < best_loss:
+                #     best_loss = avg_total_interval
+                #     save_path = path_model.joinpath(f"{now_date}_{cfg.save_path.replace('.pt', '')}_step_{global_step}.pt")
+                #     torch.save(model.state_dict(), save_path)
+                #     if args.use_wandb:
+                #         pass
                         # log_artifact(run, save_path, f"{args.mode}_{now_date}") # wandb artifact 저장 필요 시
 
                 interval_loss_sum_total = 0 
                 interval_loss_sum_mtp = 0
                 interval_loss_sum_tpp = 0
                 interval_loss_sum_tov = 0
+
+            if global_step % args.val_check_interval == 0:
+                val_loss = validate(model, val_dataloader, device, cfg, args)
+                print(f"[subword] step {global_step} val_loss={val_loss:.4f}")
+
+                if val_loss < best_loss:
+                    best_loss = val_loss
+                    save_path = path_model.joinpath(f"{now_date}_{cfg.save_path.replace('.pt', '')}_step_{global_step}.pt")
+                    torch.save(model.state_dict(), save_path)
+                    if args.use_wandb:
+                        pass
+                        # log_artifact(run, save_path, f"{args.mode}_{now_date}") # wandb artifact 저장 필요 시
 
             current_step = train_loop.n + 1
             with torch.no_grad() :
@@ -327,15 +390,88 @@ def train_subword(cfg, args) :
         wandb.finish()
 
 
+def validate(model, dataloader, device, cfg, args):
+    model.eval()
+    total_loss = 0
+    mtp_loss_total = 0
+    tpp_loss_total = 0
+    tov_loss_total = 0
+
+    ce = torch.nn.CrossEntropyLoss(ignore_index=cfg.ignore_index)
+    bce = torch.nn.CrossEntropyLoss()
+
+    val_loop = tqdm(dataloader, desc="Validation", bar_format='{l_bar}{r_bar}', leave=False)
+    
+    with torch.no_grad():
+        for X_mtp, Y_mtp, X_tpp, Y_tpp, X_tov, Y_tov in val_loop :
+            
+            X_mtp, Y_mtp = X_mtp.to(device), Y_mtp.to(device)
+            X_tpp, Y_tpp = X_tpp.to(device), Y_tpp.to(device)
+            X_tov, Y_tov = X_tov.to(device), Y_tov.to(device)
+
+            # --- T1: MTP Loss 계산 ---
+            logits_mtp = model(X_mtp, task_type='MTP')
+            loss_mtp = ce(
+                logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
+                Y_mtp.view(-1)                            # (B*L)
+            )
+
+            # --- T2: TPP Loss 계산 ---
+            logits_tpp = model(X_tpp, task_type='TPP')
+            loss_tpp = ce(
+                logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
+                Y_tpp.view(-1)                             # (B*L)
+            )
+
+            # --- T3: TOV Loss 계산 ---
+            logits_tov = model(X_tov, task_type='TOV')
+            loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
+
+            L_total = loss_mtp + loss_tpp + loss_tov
+
+            total_loss += L_total.item()
+            mtp_loss_total += loss_mtp.item()
+            tpp_loss_total += loss_tpp.item()
+            tov_loss_total += loss_tov.item()
+
+            val_loop.update(1)
+
+    avg_total = total_loss / len(dataloader)
+    avg_mtp = mtp_loss_total / len(dataloader)
+    avg_tpp = tpp_loss_total / len(dataloader)
+    avg_tov = tov_loss_total / len(dataloader)
+
+    if args.use_wandb:
+        wandb.log({
+            "step/val_total_loss": avg_total,
+            "step/val_mtp_loss": avg_mtp,
+            "step/val_tpp_loss": avg_tpp,
+            "step/val_tov_loss": avg_tov,
+        })
+    
+    model.train()
+
+    return avg_total
+
+
 def main() :
    parser = argparse.ArgumentParser()
    parser.add_argument("--mode", choices=["char", "subword"], required=True,
                         help="Pre-training mode: char or subword")
    parser.add_argument("--save", type=str, default="pretrained.pt", help="Path to save model state dict")
    parser.add_argument("--total_steps", type=int, default=10000000, help="Total training steps")
+   parser.add_argument("--val_check_interval", type=int, default=20000, help="Steps between validation")
    parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging")
    parser.add_argument("--log_interval", type=int, default=1000, help="Steps between logging")
+<<<<<<< Updated upstream
    parser.add_argument("--project_name", type=str, default="drift-finetune", help="Wandb project name")
+=======
+<<<<<<< HEAD
+   parser.add_argument("--project_name", type=str, default="dga-pretrain", help="Wandb project name")
+=======
+   parser.add_argument("--project_name", type=str, default="drift-finetune", help="Wandb project name")
+>>>>>>> 71c363b6f80618536afc4c21880b3a0f7f23fb2b
+>>>>>>> Stashed changes
    parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")
    parser.add_argument("--tov_norm", type=str, choices=["cls", "pool"], default="pool", help="TOV pooling strategy")
    parser.add_argument("--use_bert_pretokenizer", type=bool, default=False, help="Use BERT pretokenizer")
