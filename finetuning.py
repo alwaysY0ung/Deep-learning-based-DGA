@@ -55,7 +55,7 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
     if not freeze_backbone:
         unfreeze_step = int(len(train_dataloader) * unfreeze_at_epoch) if unfreeze_at_epoch is not None else float('inf')
         backbone_unfrozen = False
-    else: # freeze_backbone=True면 full finetuning하므로
+    else: # freeze_backbone=False면 full finetuning하므로
         unfreeze_step = None
         backbone_unfrozen = True
     best_val_loss = float('inf')
@@ -235,6 +235,7 @@ def main():
     parser.add_argument("--use_token", default=cfg.use_token)
     parser.add_argument("--use_char", default=cfg.use_char)
     parser.add_argument("--freeze_backbone", default=cfg.freeze_backbone)
+    parser.add_argument("--clf_norm", type=str, default='pool', choices=['cls', 'pool'])
 
     # 가중치
     parser.add_argument("--token_weights_path", type=str, default=cfg.token_weights_path)
@@ -266,9 +267,9 @@ def main():
     val_df = dataset.get_val_set()
 
     train_dataset = FineTuningDataset(train_df, tokenizer=tokenizer, 
-                                      max_len_t=args.max_len_token, max_len_c=args.max_len_char)
+                                      max_len_t=args.max_len_token, max_len_c=args.max_len_char, clf_norm=args.clf_norm)
     val_dataset = FineTuningDataset(val_df, tokenizer=tokenizer, 
-                                    max_len_t=args.max_len_token, max_len_c=args.max_len_char)
+                                    max_len_t=args.max_len_token, max_len_c=args.max_len_char, clf_norm=args.clf_norm)
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, 
                                   shuffle=True, num_workers=args.num_workers)
