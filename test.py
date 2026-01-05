@@ -95,7 +95,8 @@ def test_by_year(cfg, args, model, tokenizer, device):
             test_df,
             tokenizer=tokenizer,
             max_len_t=cfg.max_len_subword,
-            max_len_c=cfg.max_len_char
+            max_len_c=cfg.max_len_char,
+            clf_norm=args.clf_norm
         )
 
         dataloader = DataLoader(
@@ -155,8 +156,10 @@ def test_by_year(cfg, args, model, tokenizer, device):
         "FNR": fnr_all
     })
 
-    save_path = path_figure.joinpath("test_by_year.csv")
-    df.write_csv(save_path)
+    if args.save:
+        save_path = path_figure.joinpath("test_by_year.csv")
+        df.write_csv(save_path)
+
     print("\n===== Year-wise Results =====")
     print(df)
 
@@ -212,7 +215,8 @@ def test_by_family(cfg, args, model, tokenizer, device):
             test_df,
             tokenizer=tokenizer,
             max_len_t=cfg.max_len_subword,
-            max_len_c=cfg.max_len_char
+            max_len_c=cfg.max_len_char,
+            clf_norm=args.clf_norm
         )
 
         dataloader = DataLoader(
@@ -279,14 +283,17 @@ def test_by_family(cfg, args, model, tokenizer, device):
     print("\n===== Family-wise Results =====")
     print(results_df)
 
-    save_path = path_figure.joinpath("test_by_family.csv")
-    results_df.write_csv(save_path)
+    if args.save:
+        save_path = path_figure.joinpath("test_by_family.csv")
+        results_df.write_csv(save_path)
 
 
 def main() :
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, required=True, help="Path to model checkpoint")
     parser.add_argument("--test_type", type=str, choices=["year", "family"], default="year", help="Test type")
+    parser.add_argument("--clf_norm", type=str, default='pool', choices=['cls', 'pool'])
+    parser.add_argument("--save", type=bool, default=False, help="Save results")
     parser.add_argument("--project_name", type=str, default="proposal", help="Wandb project name")
     parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")
     parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging")
