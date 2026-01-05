@@ -48,14 +48,28 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
         clf_norm='pool' # or 'cls' method
     ).to(device)
 
-    trainable_params = [p for p in ft_model.parameters() if p.requires_grad]
-    optimizer = optim.Adam(trainable_params, lr=learning_rate)
+    param_groups = []
+    if ft_model.use_token:
+        param_groups.extend([
+            {'params': ft_model.transformer_encoder_t.parameters(), 'lr': backbone_lr},
+            {'params': ft_model.embedding_t.parameters(), 'lr': backbone_lr},
+            {'params': ft_model.positional_encoding_t.parameters(), 'lr': backbone_lr}
+        ])
+    if ft_model.use_char:
+        param_groups.extend([
+            {'params': ft_model.transformer_encoder_c.parameters(), 'lr': backbone_lr},
+            {'params': ft_model.embedding_c.parameters(), 'lr': backbone_lr},
+            {'params': ft_model.positional_encoding_c.parameters(), 'lr': backbone_lr}
+        ])
+    param_groups.append({'params': ft_model.classifier_head.parameters(), 'lr': learning_rate})
+
+    optimizer = optim.Adam(param_groups)
     criterion = nn.CrossEntropyLoss()
 
-    if not freeze_backbone:
+    if freeze_backbone:
         unfreeze_step = int(len(train_dataloader) * unfreeze_at_epoch) if unfreeze_at_epoch is not None else float('inf')
-        backbone_unfrozen = False
-    else: # freeze_backbone=False면 full finetuning하므로
+        backbone_unfrozen = False # 추후 백본 해제 시 True로 변경됨
+    else: # freeze_backbone=False 이면 full finetuning하므로
         unfreeze_step = None
         backbone_unfrozen = True
     best_val_loss = float('inf')
@@ -74,27 +88,10 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
         for X_token, X_char, y_train in train_loop :
             global_step += 1
 
-            if freeze_backbone is not True and unfreeze_at_epoch is not None and not backbone_unfrozen and global_step >= unfreeze_step:
-                for param in ft_model.parameters(): # 모든 파라미터 해제
-                    param.requires_grad = True
-                
-                param_groups = []
-                if ft_model.use_token:
-                    param_groups.extend([
-                        {'params': ft_model.transformer_encoder_t.parameters(), 'lr': backbone_lr},
-                        {'params': ft_model.embedding_t.parameters(), 'lr': backbone_lr},
-                        {'params': ft_model.positional_encoding_t.parameters(), 'lr': backbone_lr}
-                    ])
-                if ft_model.use_char:
-                    param_groups.extend([
-                        {'params': ft_model.transformer_encoder_c.parameters(), 'lr': backbone_lr},
-                        {'params': ft_model.embedding_c.parameters(), 'lr': backbone_lr},
-                        {'params': ft_model.positional_encoding_c.parameters(), 'lr': backbone_lr}
-                    ])
-                param_groups.append({'params': ft_model.classifier_head.parameters(), 'lr': learning_rate})
-                
-                optimizer = optim.Adam(param_groups)
+            if freeze_backbone and not backbone_unfrozen and global_step >= unfreeze_step:
+                ft_model.set_backbone_freezing(freeze=False) # 모든 파라미터 해제
                 backbone_unfrozen = True
+                print(f"--- [Step {global_step}] Backbone Unfrozen. Momentum Preserved. ---")
 
             X_token, X_char, y_train = X_token.to(device), X_char.to(device), y_train.to(device)
             optimizer.zero_grad()
