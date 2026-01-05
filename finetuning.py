@@ -48,7 +48,13 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
         clf_norm='pool' # or 'cls' method
     ).to(device)
 
-    param_groups = []
+    param_groups = [
+        {
+            'params': ft_model.classifier_head.parameters(), 
+            'lr': learning_rate # 로깅 시 index가 0인 것이 로깅되기 때문에 헤드 파라미터를 먼저 append해주어야함
+        }
+    ]
+    
     if ft_model.use_token:
         param_groups.extend([
             {'params': ft_model.transformer_encoder_t.parameters(), 'lr': backbone_lr},
@@ -61,7 +67,6 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
             {'params': ft_model.embedding_c.parameters(), 'lr': backbone_lr},
             {'params': ft_model.positional_encoding_c.parameters(), 'lr': backbone_lr}
         ])
-    param_groups.append({'params': ft_model.classifier_head.parameters(), 'lr': learning_rate})
 
     optimizer = optim.Adam(param_groups)
     criterion = nn.CrossEntropyLoss()
