@@ -463,15 +463,7 @@ def main() :
    parser.add_argument("--val_check_interval", type=int, default=20000, help="Steps between validation")
    parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging")
    parser.add_argument("--log_interval", type=int, default=1000, help="Steps between logging")
-<<<<<<< Updated upstream
-   parser.add_argument("--project_name", type=str, default="drift-finetune", help="Wandb project name")
-=======
-<<<<<<< HEAD
    parser.add_argument("--project_name", type=str, default="dga-pretrain", help="Wandb project name")
-=======
-   parser.add_argument("--project_name", type=str, default="drift-finetune", help="Wandb project name")
->>>>>>> 71c363b6f80618536afc4c21880b3a0f7f23fb2b
->>>>>>> Stashed changes
    parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")
    parser.add_argument("--tov_norm", type=str, choices=["cls", "pool"], default="pool", help="TOV pooling strategy")
    parser.add_argument("--use_bert_pretokenizer", type=bool, default=False, help="Use BERT pretokenizer")
