@@ -55,7 +55,7 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
     if not freeze_backbone:
         unfreeze_step = int(len(train_dataloader) * unfreeze_at_epoch) if unfreeze_at_epoch is not None else float('inf')
         backbone_unfrozen = False
-    else:
+    else: # freeze_backbone=True면 full finetuning하므로
         unfreeze_step = None
         backbone_unfrozen = True
     best_val_loss = float('inf')
@@ -232,9 +232,9 @@ def main():
     parser.add_argument("--log_interval_steps", type=int, default=cfg.log_interval_steps)
 
     # 플래그
-    parser.add_argument("--use_token", action="store_true", default=cfg.use_token)
-    parser.add_argument("--use_char", action="store_true", default=cfg.use_char)
-    parser.add_argument("--freeze_backbone", action="store_true", default=cfg.freeze_backbone)
+    parser.add_argument("--use_token", default=cfg.use_token)
+    parser.add_argument("--use_char", default=cfg.use_char)
+    parser.add_argument("--freeze_backbone", default=cfg.freeze_backbone)
 
     # 가중치
     parser.add_argument("--token_weights_path", type=str, default=cfg.token_weights_path)
