@@ -237,7 +237,7 @@ def main():
     parser.add_argument("--use_token", default=cfg.use_token)
     parser.add_argument("--use_char", default=cfg.use_char)
     parser.add_argument("--freeze_backbone", default=cfg.freeze_backbone)
-    parser.add_argument("--clf_norm", type=str, default='pool', choices=['cls', 'pool'])
+    parser.add_argument("--clf_norm", type=str, default=cfg.clf_norm, choices=['cls', 'pool'])
 
     # 가중치
     parser.add_argument("--token_weights_path", type=str, default=cfg.token_weights_path)
