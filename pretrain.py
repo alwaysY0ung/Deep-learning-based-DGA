@@ -166,14 +166,6 @@ def train_char(cfg, args) :
 
                 train_loop.write(f"[Step {global_step} Interval Log]: Train Loss: {avg_total_interval:.4f}")
 
-                # if avg_total_interval < best_loss:
-                #     best_loss = avg_total_interval
-                #     save_path = path_model.joinpath(f"{now_date}_{cfg.save_path.replace('.pt', '')}_step_{global_step}.pt")
-                #     torch.save(model.state_dict(), save_path)
-                #     if args.use_wandb:
-                #         pass
-                        # log_artifact(run, save_path, f"{args.mode}_{now_date}") # wandb artifact 저장 필요 시
-
                 interval_loss_sum_total = 0 
                 interval_loss_sum_mtp = 0
                 interval_loss_sum_tpp = 0
@@ -181,7 +173,7 @@ def train_char(cfg, args) :
 
             if global_step % args.val_check_interval == 0:
                 val_loss = validate(model, val_dataloader, device, cfg, args)
-                print(f"[subword] step {global_step} val_loss={val_loss:.4f}")
+                train_loop.write(f"[subword] step {global_step} val_loss={val_loss:.4f}")
 
                 if val_loss < best_loss:
                     best_loss = val_loss
@@ -350,14 +342,6 @@ def train_subword(cfg, args) :
 
                 train_loop.write(f"[Step {global_step} Interval Log]: Train Loss: {avg_total_interval:.4f}")
 
-                # if avg_total_interval < best_loss:
-                #     best_loss = avg_total_interval
-                #     save_path = path_model.joinpath(f"{now_date}_{cfg.save_path.replace('.pt', '')}_step_{global_step}.pt")
-                #     torch.save(model.state_dict(), save_path)
-                #     if args.use_wandb:
-                #         pass
-                        # log_artifact(run, save_path, f"{args.mode}_{now_date}") # wandb artifact 저장 필요 시
-
                 interval_loss_sum_total = 0 
                 interval_loss_sum_mtp = 0
                 interval_loss_sum_tpp = 0
@@ -365,7 +349,7 @@ def train_subword(cfg, args) :
 
             if global_step % args.val_check_interval == 0:
                 val_loss = validate(model, val_dataloader, device, cfg, args)
-                print(f"[subword] step {global_step} val_loss={val_loss:.4f}")
+                train_loop.write(f"[subword] step {global_step} val_loss={val_loss:.4f}")
 
                 if val_loss < best_loss:
                     best_loss = val_loss
