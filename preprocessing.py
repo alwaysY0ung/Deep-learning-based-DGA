@@ -205,8 +205,8 @@ class FineTuningDataset(Dataset) :
         
         token_indices = [self.char2id.get(c, self.unk_idx) for c in domain]
 
-        if len(token_indices) > self.max_len_c - 1:
-            token_indices = token_indices[:self.max_len_c - 1]
+        if len(token_indices) > self.max_len_c - 2:
+            token_indices = token_indices[:self.max_len_c - 2]
 
         if self.clf_norm == 'cls' :
             ids = [self.cls_idx]
@@ -226,8 +226,8 @@ class FineTuningDataset(Dataset) :
         encoded = self.tokenizer(domain, add_special_tokens=False)
         token_indices = encoded["input_ids"]
 
-        if len(token_indices) > self.max_len_t - 1:
-            token_indices = token_indices[:self.max_len_t - 1]
+        if len(token_indices) > self.max_len_t - 2:
+            token_indices = token_indices[:self.max_len_t - 2]
 
         if self.clf_norm == 'cls' :
             ids = [self.cls_idx]
