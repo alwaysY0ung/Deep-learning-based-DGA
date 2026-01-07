@@ -34,7 +34,7 @@ def load_pretrain_weights(pt_model, weigths_path, device) :
 def fine_tune_dga_classifier(pt_model_t, pt_model_c,
                              train_dataloader, val_dataloader, weights_path_t, weights_path_c,
                              device, num_epochs, log_interval_steps, save_path,
-                             use_token=True, use_char=True, freeze_backbone=True,
+                             use_token=True, use_char=True, use_bert=True, freeze_backbone=True,
                              unfreeze_at_epoch=0.5,
                              learning_rate=1e-4, backbone_lr=1e-6,):
 
@@ -43,9 +43,10 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
     
     ft_model = FineTuningModel(
         pretrain_model_t=pt_t, 
-        pretrain_model_c=pt_c, 
+        pretrain_model_c=pt_c,
+        use_bert=use_bert,
         freeze_backbone=freeze_backbone,
-        clf_norm='pool' # or 'cls' method
+        clf_norm='cls' # or 'cls' method
     ).to(device)
 
     param_groups = [
@@ -90,21 +91,32 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
                         bar_format="{l_bar}{n_fmt}/{total_fmt} | [{elapsed}<{remaining} {postfix}]",
                         leave=False)
 
-        for X_token, X_char, y_train in train_loop :
+        for batch in train_loop :
             global_step += 1
 
             if freeze_backbone and not backbone_unfrozen and global_step >= unfreeze_step:
                 ft_model.set_backbone_freezing(freeze=False) # 모든 파라미터 해제
                 backbone_unfrozen = True
                 print(f"--- [Step {global_step}] Backbone Unfrozen. Momentum Preserved. ---")
+            
+            batch = [b.to(device) for b in batch]
+            y_train = batch[-1]
 
-            X_token, X_char, y_train = X_token.to(device), X_char.to(device), y_train.to(device)
+            if use_bert :
+                X_token, X_char, X_bert, X_bert_mask = batch[:-1]
+                logits = ft_model(
+                    X_token if use_token else None, 
+                    X_char if use_char else None,
+                    X_bert, X_bert_mask
+                )
+            else :
+                X_token, X_char = batch[:-1]
+                logits = ft_model(
+                    X_token if use_token else None, 
+                    X_char if use_char else None
+                )
+            
             optimizer.zero_grad()
-
-            logits = ft_model(
-                X_token if use_token else None, 
-                X_char if use_char else None
-            )
             
             loss = criterion(logits, y_train)
             loss.backward()
@@ -124,7 +136,7 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
 
                 if global_step % 10000 == 0 :
 
-                    avg_val_loss, val_acc, val_precision, val_recall, val_f1 = evaluate_finetuning(ft_model, val_dataloader, device)
+                    avg_val_loss, val_acc, val_precision, val_recall, val_f1 = evaluate_finetuning(ft_model, val_dataloader, device, use_bert)
 
                     wandb.log({
                         'train/loss' : avg_total_interval_loss,
@@ -138,7 +150,7 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
 
                     if avg_val_loss < best_val_loss:
                         best_val_loss = avg_val_loss
-                        torch.save(ft_model.state_dict(), save_path)
+                        # torch.save(ft_model.state_dict(), save_path)
 
                     train_loop.write(f"[Step {global_step} Interval Log]: Train Loss: {avg_total_interval_loss:.4f}, Val Loss: {avg_val_loss:.4f}, Val Acc: {val_acc:.4f},"
                         f"Val Precision: {val_precision:.4f}, Val Recall: {val_recall:.4f}, Val F1: {val_f1:.4f}")
@@ -156,7 +168,7 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
 
             train_loop.set_postfix(avg_loss=f'{avg_total:.4f}', refresh=False)
 
-def evaluate_finetuning(model, dataloader, device):
+def evaluate_finetuning(model, dataloader, device, use_bert):
     model.eval()
     criterion = nn.CrossEntropyLoss()
     total_loss = 0
@@ -169,10 +181,20 @@ def evaluate_finetuning(model, dataloader, device):
                     leave=False)
 
     with torch.no_grad():
-        for X_token, X_char, y_val in val_loop:
-            X_token, X_char, y_val = X_token.to(device), X_char.to(device), y_val.to(device)
+        for batch in val_loop:
+            batch = [b.to(device) for b in batch]
+            y_val = batch[-1]
             
-            logits = model(
+            if use_bert:
+                X_token, X_char, X_bert, X_bert_mask = batch[:-1]
+                logits = model(
+                X_token if model.use_token else None, 
+                X_char if model.use_char else None,
+                X_bert, X_bert_mask
+            )
+            else:
+                X_token, X_char = batch[:-1]
+                logits = model(
                 X_token if model.use_token else None, 
                 X_char if model.use_char else None
             )
@@ -236,6 +258,7 @@ def main():
     # 플래그
     parser.add_argument("--use_token", default=cfg.use_token)
     parser.add_argument("--use_char", default=cfg.use_char)
+    parser.add_argument("--use_bert", default=False)
     parser.add_argument("--freeze_backbone", default=cfg.freeze_backbone)
     parser.add_argument("--clf_norm", type=str, default=cfg.clf_norm, choices=['cls', 'pool'])
 
@@ -269,9 +292,9 @@ def main():
     val_df = dataset.get_val_set()
 
     train_dataset = FineTuningDataset(train_df, tokenizer=tokenizer, 
-                                      max_len_t=args.max_len_token, max_len_c=args.max_len_char, clf_norm=args.clf_norm)
+                                      max_len_t=args.max_len_token, max_len_c=args.max_len_char, clf_norm=args.clf_norm, use_bert=args.use_bert)
     val_dataset = FineTuningDataset(val_df, tokenizer=tokenizer, 
-                                    max_len_t=args.max_len_token, max_len_c=args.max_len_char, clf_norm=args.clf_norm)
+                                    max_len_t=args.max_len_token, max_len_c=args.max_len_char, clf_norm=args.clf_norm, use_bert=args.use_bert)
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, 
                                   shuffle=True, num_workers=args.num_workers)
@@ -299,6 +322,7 @@ def main():
         save_path=best_model_path,
         use_token=args.use_token,
         use_char=args.use_char,
+        use_bert=args.use_bert,
         freeze_backbone=args.freeze_backbone,
         learning_rate=args.learning_rate,
         backbone_lr=args.backbone_lr

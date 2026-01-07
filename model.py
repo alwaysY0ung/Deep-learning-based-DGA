@@ -1,3 +1,4 @@
+from transformers.models.bert.modeling_bert import BertModel
 import torch
 from torch import nn
 import math
@@ -84,7 +85,7 @@ class TPPHead(nn.Module) :
         return logtis
     
 class TOVHead(nn.Module):
-    def __init__(self, d_model, num_classes=2, dropout=0.1, tov_norm = 'pool'):
+    def __init__(self, d_model, num_classes=2, dropout=0.1, tov_norm = 'cls'):
         super().__init__()
         self.tov_norm = tov_norm
         if tov_norm == "pool" :
@@ -115,7 +116,7 @@ class TOVHead(nn.Module):
     
 class PretrainedModel(nn.Module) :
     def __init__(self, vocab_size, d_model, n_heads, dim_feedforward, 
-                 num_layers, max_len, dropout=0.1, padding_idx=0, tov_norm='pool') :
+                 num_layers, max_len, dropout=0.1, padding_idx=0, tov_norm='cls') :
         super().__init__()
 
         self.d_model = d_model
@@ -183,14 +184,15 @@ class FinetuningHead(nn.Module) :
         return logits
     
 class FineTuningModel(nn.Module):
-    def __init__(self, pretrain_model_t=None, pretrain_model_c=None,
-                 dropout=0.1, padding_idx=0, clf_norm = 'pool', freeze_backbone=False):
+    def __init__(self, pretrain_model_t=None, pretrain_model_c=None, use_bert=False,
+                 dropout=0.1, padding_idx=0, clf_norm = 'cls', freeze_backbone=False):
         super().__init__()
 
         self.padding_idx = padding_idx
         self.clf_norm = clf_norm
         self.use_token = pretrain_model_t is not None
         self.use_char = pretrain_model_c is not None
+        self.use_bert = use_bert
 
         sample_model = pretrain_model_t if self.use_token else pretrain_model_c # Extract d_model value
         d_model = sample_model.d_model
@@ -198,6 +200,11 @@ class FineTuningModel(nn.Module):
         num_active_paths = sum([self.use_token, self.use_char])
         dim_per_path = d_model * 2 if self.clf_norm == 'pool' else d_model
         total_input_dim = dim_per_path * num_active_paths
+
+        if self.use_bert :
+            self.bert = BertModel.from_pretrained('bert-base-uncased')
+            self._set_grad(self.bert, False) # freeze bert
+            total_input_dim += self.bert.config.hidden_size
 
         # --- Token Path Components ---
         # load_pretrain(pretrain_model_t)
@@ -235,7 +242,8 @@ class FineTuningModel(nn.Module):
     def create_padding_mask(self, input_ids):
         return (input_ids == self.padding_idx).to(input_ids.device)
 
-    def forward(self, input_ids_t=None, input_ids_c=None):
+    def forward(self, input_ids_t=None, input_ids_c=None,
+                bert_input_ids=None, bert_mask=None):
         features = []
 
         # --- 1. Token Path (X_t) 처리 ---
@@ -271,6 +279,12 @@ class FineTuningModel(nn.Module):
                 c_feat = c_out[:, 0, :]
             features.append(c_feat)
 
+        if self.use_bert and bert_input_ids is not None :
+            with torch.no_grad():
+                bert_out = self.bert(bert_input_ids, attention_mask=bert_mask)
+                bert_feat = bert_out.last_hidden_state[:, 0, :]
+            features.append(bert_feat)
+            
         combined_output = torch.cat(features, dim=1) if len(features) > 1 else features[0]
 
         # # 디버깅용 출력 (한 번만 확인하고 지우셔도 됩니다)
