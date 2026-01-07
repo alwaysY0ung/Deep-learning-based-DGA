@@ -41,7 +41,6 @@ def train_char(cfg, args) :
         max_len=cfg.max_len_char,
         mask_ratio=cfg.mask_ratio,
         type = 'char',
-        tov_norm=cfg.tov_norm,
     )
     
     train_dataloader = DataLoader(
@@ -56,8 +55,7 @@ def train_char(cfg, args) :
         val_df,
         max_len=cfg.max_len_char,
         mask_ratio=cfg.mask_ratio,
-        type = 'char',
-        tov_norm=cfg.tov_norm,
+        type = 'char'
     )
 
     val_dataloader = DataLoader(
@@ -221,7 +219,6 @@ def train_subword(cfg, args) :
         tokenizer=tokenizer,
         mask_ratio=cfg.mask_ratio,
         type = 'subword',
-        tov_norm=cfg.tov_norm,
     )
     
     train_dataloader = DataLoader(
@@ -238,7 +235,6 @@ def train_subword(cfg, args) :
         tokenizer=tokenizer,
         mask_ratio=cfg.mask_ratio,
         type = 'subword',
-        tov_norm=cfg.tov_norm,
     )
 
     val_dataloader = DataLoader(
