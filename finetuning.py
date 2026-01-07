@@ -35,7 +35,7 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
                              train_dataloader, val_dataloader, weights_path_t, weights_path_c,
                              device, num_epochs, log_interval_steps, save_path,
                              use_token=True, use_char=True, freeze_backbone=True,
-                             unfreeze_at_epoch=0.5,
+                             unfreeze_at_epoch=0.5, clf_norm='cls',
                              learning_rate=1e-4, backbone_lr=1e-6,):
 
     pt_t = load_pretrain_weights(pt_model_t, weights_path_t, device) if use_token else None
@@ -45,7 +45,7 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
         pretrain_model_t=pt_t, 
         pretrain_model_c=pt_c, 
         freeze_backbone=freeze_backbone,
-        clf_norm='pool' # or 'cls' method
+        clf_norm=clf_norm # or 'cls' method
     ).to(device)
 
     param_groups = [
@@ -269,9 +269,9 @@ def main():
     val_df = dataset.get_val_set()
 
     train_dataset = FineTuningDataset(train_df, tokenizer=tokenizer, 
-                                      max_len_t=args.max_len_token, max_len_c=args.max_len_char, clf_norm=args.clf_norm)
+                                      max_len_t=args.max_len_token, max_len_c=args.max_len_char)
     val_dataset = FineTuningDataset(val_df, tokenizer=tokenizer, 
-                                    max_len_t=args.max_len_token, max_len_c=args.max_len_char, clf_norm=args.clf_norm)
+                                    max_len_t=args.max_len_token, max_len_c=args.max_len_char)
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, 
                                   shuffle=True, num_workers=args.num_workers)
@@ -300,6 +300,7 @@ def main():
         use_token=args.use_token,
         use_char=args.use_char,
         freeze_backbone=args.freeze_backbone,
+        clf_norm=args.clf_norm,
         learning_rate=args.learning_rate,
         backbone_lr=args.backbone_lr
     )
