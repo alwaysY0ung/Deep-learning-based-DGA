@@ -449,7 +449,7 @@ def main() :
    parser.add_argument("--log_interval", type=int, default=1000, help="Steps between logging")
    parser.add_argument("--project_name", type=str, default="dga-pretrain", help="Wandb project name")
    parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")
-   parser.add_argument("--tov_norm", type=str, choices=["cls", "pool"], default="pool", help="TOV pooling strategy")
+   parser.add_argument("--tov_norm", type=str, choices=["cls", "pool"], default="cls", help="TOV pooling strategy")
    parser.add_argument("--use_bert_pretokenizer", type=bool, default=False, help="Use BERT pretokenizer")
    parser.add_argument("--tokenizer_min_freq", type=int, default=0, help="Tokenizer min frequency")
    parser.add_argument("--tokenizer_vocab_size", type=int, default=30522, help="Tokenizer vocab size")
