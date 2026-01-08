@@ -80,23 +80,42 @@ def train(file_paths,
     return tokenizer
 
 if __name__ == "__main__":
+    from transformers import PreTrainedTokenizerFast
+    from utility.dataset import get_train_set_tld # 이거 get_train_set_pretrain -> get_train_set_tld로 바꿨는데 꼬옥 더블체크 부탁드립니다...
+    from utility.config import PretrainConfig
+    from utility.path import path_tokenizer
+
     cfg = PretrainConfig
     vocab = cfg.vocab_size_subword
     minfreq = cfg.min_freq_subword
     _, paths = get_train_set_tld()
 
-    trained_tokenizer = train(
-        file_paths=paths,
-        text_col="domain",
-        vocab_size=vocab,
-        min_freq=minfreq,
-        use_bert_pretokenizer=True
-    )
+    tokenizer_path = path_tokenizer.joinpath((f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both-tld.json"))
+
+    if not tokenizer_path.exists():
+        trained_tokenizer = train(
+            file_paths=paths,
+            text_col="domain",
+            vocab_size=vocab,
+            min_freq=minfreq,
+            use_bert_pretokenizer=True
+        )
+    else:
+        trained_tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_path))
 
     # 검증: [.com]이 하나의 토큰으로 나오는지 확인
     test_domain = "google[.com]"
-    encoded = trained_tokenizer.encode(test_domain)
+    encoded = trained_tokenizer(test_domain)
     print(f"Test Sentence: {test_domain}")
-    print(f"Tokens: {encoded.tokens}")
-    print(f"Token IDs: {encoded.ids}")
+    print(f"Encoded: {encoded}\n")
+
+    tokens = trained_tokenizer.tokenize(test_domain)
+    ids = trained_tokenizer.convert_tokens_to_ids(tokens)
+    for t, i in zip(tokens, ids):
+        print(f"{t:10s} -> {i}")
+
+    input_ids = encoded["input_ids"]
+    tokens = trained_tokenizer.convert_ids_to_tokens(input_ids)
+    print(tokens)
+
     # 예상 결과: ['[CLS]', 'google', '[.com]', '[SEP]']
