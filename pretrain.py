@@ -50,6 +50,21 @@ def train_char(cfg, args) :
         pin_memory=True,
     )
 
+    val_dataset = SubTaskDataset(
+        val_df,
+        max_len=cfg.max_len_char,
+        mask_ratio=cfg.mask_ratio,
+        type = 'char'
+    )
+
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        num_workers=cfg.num_workers,
+        pin_memory=True,
+    )
+
     model = PretrainedModel(
         vocab_size=cfg.vocab_size_char,
         d_model=cfg.d_model,
@@ -214,6 +229,22 @@ def train_subword(cfg, args) :
         train_dataset,
         batch_size=cfg.batch_size,
         shuffle=True,
+        num_workers=cfg.num_workers,
+        pin_memory=True,
+    )
+
+    val_dataset = SubTaskDataset(
+        val_df,
+        max_len=cfg.max_len_subword,
+        tokenizer=tokenizer,
+        mask_ratio=cfg.mask_ratio,
+        type = 'subword'
+    )
+
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=cfg.batch_size,
+        shuffle=False,
         num_workers=cfg.num_workers,
         pin_memory=True,
     )

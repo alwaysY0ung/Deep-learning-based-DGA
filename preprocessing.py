@@ -56,7 +56,7 @@ def tpp_dataset(inputs, special_ids, ignore_idx=-100) :
     return shuffled_inputs, labels
 
 
-def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5, tov_norm='cls') :
+def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5) :
     non_padding_indices = np.where(inputs != special_ids.pad_id)[0]
     non_padding_indices = non_padding_indices[:-1]
     processed_inputs = np.copy(inputs)
@@ -81,13 +81,7 @@ def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5, tov_norm='cls') 
     if len(pure_tokens) > max_len - 2:
         pure_tokens = pure_tokens[:max_len - 2]
 
-    if tov_norm == 'cls' :
-        ids = [special_ids.cls_id]
-        ids.extend(pure_tokens)
-    elif tov_norm == 'pool' :
-        ids = pure_tokens
-
-    ids.append(special_ids.sep_id)
+    ids = [special_ids.cls_id] + pure_tokens + [special_ids.sep_id]
 
     if len(ids) < max_len:
         ids += [special_ids.pad_id] * (max_len - len(ids))
@@ -97,7 +91,7 @@ def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5, tov_norm='cls') 
 
 class SubTaskDataset(Dataset) :
     def __init__(self, df, domain_col='domain', label_col='label', max_len=77, mask_ratio=0.15, ignore_idx=-100, shuffle_prob = 0.5,
-                tokenizer=None, special_ids=SpecialIDs, type='char', tov_norm='cls'):
+                tokenizer=None, special_ids=SpecialIDs, type='char'):
         self.df = df
         self.domain_col = domain_col
         self.label_col = label_col
@@ -112,7 +106,6 @@ class SubTaskDataset(Dataset) :
         self.cls_idx = special_ids.cls_id
         self.sep_idx = special_ids.sep_id
         self.type = type
-        self.tov_norm = tov_norm
         if self.type == 'char' :
             self.char_list = list("abcdefghijklmnopqrstuvwxyz0123456789-.")
             self.special_tokens = ['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[MASK]']
@@ -148,7 +141,7 @@ class SubTaskDataset(Dataset) :
         return tpp_dataset(inputs, self.special_ids, self.ignore_idx)
 
     def tov(self, inputs) :
-        return tov_dataset(inputs, self.special_ids, self.max_len, self.shuffle_prob, self.tov_norm)
+        return tov_dataset(inputs, self.special_ids, self.max_len, self.shuffle_prob)
 
     def __len__(self):
         return self.df.shape[0]
@@ -177,14 +170,13 @@ class SubTaskDataset(Dataset) :
   
     
 class FineTuningDataset(Dataset) :
-    def __init__(self, df, domain_col='domain', label_col='label', special_ids=SpecialIDs, max_len_t=30, max_len_c=77, tokenizer=None, clf_norm='cls'):
+    def __init__(self, df, domain_col='domain', label_col='label', special_ids=SpecialIDs, max_len_t=30, max_len_c=77, tokenizer=None):
         self.df = df
         self.domain_col = domain_col
         self.label_col = label_col
         self.max_len_t = max_len_t
         self.max_len_c = max_len_c
         self.tokenizer = tokenizer
-        self.clf_norm = clf_norm
         if tokenizer == None :
             raise ValueError("Tokenizer must be required.")
         self.special_ids = special_ids
@@ -208,13 +200,7 @@ class FineTuningDataset(Dataset) :
         if len(token_indices) > self.max_len_c - 2:
             token_indices = token_indices[:self.max_len_c - 2]
 
-        if self.clf_norm == 'cls' :
-            ids = [self.cls_idx]
-            ids.extend(token_indices)
-        elif self.clf_norm == 'pool' :
-            ids = token_indices
-
-        ids.append(self.sep_idx)
+        ids = [self.cls_idx] + token_indices + [self.sep_idx]
 
         if len(ids) < self.max_len_c:
             ids += [self.pad_idx] * (self.max_len_c - len(ids))
@@ -229,13 +215,7 @@ class FineTuningDataset(Dataset) :
         if len(token_indices) > self.max_len_t - 2:
             token_indices = token_indices[:self.max_len_t - 2]
 
-        if self.clf_norm == 'cls' :
-            ids = [self.cls_idx]
-            ids.extend(token_indices)
-        elif self.clf_norm == 'pool' :
-            ids = token_indices
-
-        ids.append(self.sep_idx)
+        ids = [self.cls_idx] + token_indices + [self.sep_idx]
 
         if len(ids) < self.max_len_t:
             ids += [self.pad_idx] * (self.max_len_t - len(ids))
@@ -260,7 +240,7 @@ if __name__ == '__main__':
     df = pl.DataFrame({'domain': ['a'], 'label': [1]})
 
     tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased', use_fast=True)
-    dataset = SubTaskDataset(df, tokenizer=tokenizer, max_len=30, type='subword', tov_norm='cls')
+    dataset = SubTaskDataset(df, tokenizer=tokenizer, max_len=30, type='subword')
 
     X_mtp, Y_mtp, X_tpp, Y_tpp, X_tov, Y_tov = dataset[0]
 
@@ -271,7 +251,7 @@ if __name__ == '__main__':
     print(f'X TOV(앞 20개): {X_tov[:20].tolist()}')
     print(f'Y MTP(앞 20개): {Y_mtp[:20].tolist()}')
 
-    dataset = FineTuningDataset(df, tokenizer=tokenizer, clf_norm='cls')
+    dataset = FineTuningDataset(df, tokenizer=tokenizer)
 
     X_token, X_char, y = dataset[0]
 
