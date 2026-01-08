@@ -13,9 +13,13 @@ class SpecialIDs:
     trunc_id: int = 5
 
 
-def mtp_dataset(inputs, special_ids, max_len, mask_ratio=0.15, ignore_idx=-100) :
+def mtp_dataset(inputs, special_ids, max_len, mask_ratio=0.15, ignore_idx=-100, type='char') :
     labels = np.full(max_len, ignore_idx, dtype=np.int64)
-    non_padding_indices = np.where(inputs > 4408)[0]
+
+    if type == 'subword':
+        non_padding_indices = np.where(inputs > 4408)[0]
+    elif type == 'char' :
+        non_padding_indices = np.where(inputs > 5)[0]
 
     if len(non_padding_indices) <= 1:
         return inputs, labels
@@ -55,10 +59,15 @@ def tpp_dataset(inputs, special_ids, ignore_idx=-100) :
     return shuffled_inputs, labels
 
 
-def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5) :
-    non_padding_indices = np.where(inputs > 4408)[0]
-    tld_indices = np.where((inputs >= 6) & (inputs <= 4408))[0]
+def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5, type='char') :
     processed_inputs = np.copy(inputs)
+
+    if type == 'subword':
+        non_padding_indices = np.where(inputs > 4408)[0]
+        tld_indices = np.where((inputs >= 6) & (inputs <= 4408))[0]
+    elif type == 'char' :
+        non_padding_indices = np.where(inputs > 5)[0]
+        tld_indices = np.array([], dtype=int)
 
     if len(non_padding_indices) <= 1:
         is_scramble = False
@@ -117,7 +126,7 @@ class SubTaskDataset(Dataset) :
 
             self.char2id = {char: idx for idx, char in enumerate(self.all_tokens)}
         self.tokenizer = tokenizer
-        if self.type == 'subword' and  self.tokenizer == None :
+        if self.type == 'subword' and self.tokenizer == None :
             raise ValueError("Tokenizer must be required.")
             
 
@@ -139,13 +148,13 @@ class SubTaskDataset(Dataset) :
         return np.array(token_indices, dtype=np.int64)
 
     def mtp(self, inputs) :
-        return mtp_dataset(inputs, self.special_ids, self.max_len, self.mask_ratio, self.ignore_idx)
+        return mtp_dataset(inputs, self.special_ids, self.max_len, self.mask_ratio, self.ignore_idx, self.type)
 
     def tpp(self, inputs) :
         return tpp_dataset(inputs, self.special_ids, self.ignore_idx)
 
     def tov(self, inputs) :
-        return tov_dataset(inputs, self.special_ids, self.max_len, self.shuffle_prob)
+        return tov_dataset(inputs, self.special_ids, self.max_len, self.shuffle_prob, self.type)
 
     def __len__(self):
         return self.df.shape[0]
@@ -245,21 +254,23 @@ if __name__ == '__main__':
     import polars as pl
 
     df = pl.DataFrame({'domain': ['google2ec[.co][.kr]'], 'label': [1]})
+    df = df.with_columns(
+    pl.col("domain").str.replace_all(r"[\[\]]", ""))
 
     tokenizer = PreTrainedTokenizerFast(tokenizer_file='./artifacts/tokenizer/tokenizer-2-34926-both-tld.json')
-    dataset = SubTaskDataset(df, tokenizer=tokenizer, max_len=10, type='subword')
+    dataset = SubTaskDataset(df, tokenizer=tokenizer, max_len=10, type='char')
 
     X_mtp, Y_mtp, X_tpp, Y_tpp, X_tov, Y_tov = dataset[0]
 
     print(f"도메인 원본: {df.row(0)[0]}")
     print(f"전처리된 X: {X_mtp.shape}")
     print(f"X MTP(앞 20개): {X_mtp[:20].tolist()}")
-    print(f"X TPP(앞 20개): {X_tpp[:20].tolist()}")
-    print(f'X TOV(앞 20개): {X_tov[:20].tolist()}')
     print(f'Y MTP(앞 20개): {Y_mtp[:20].tolist()}')
+    print(f"X TPP(앞 20개): {X_tpp[:20].tolist()}")
     print(f'Y TPP(앞 20개): {Y_tpp[:20].tolist()}')
+    print(f"X TOV(앞 20개): {X_tov[:20].tolist()}")
     print(f'Y TOV(앞 20개): {Y_tov}')
-    print("토큰 복원: ", tokenizer.decode(X_mtp))
+    # print("토큰 복원: ", tokenizer.decode(X_mtp))
 
     # dataset = FineTuningDataset(df, tokenizer=tokenizer)
 

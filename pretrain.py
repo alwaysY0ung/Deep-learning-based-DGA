@@ -36,6 +36,12 @@ def train_char(cfg, args) :
     train_df, _ = get_train_set_tld()
     val_df = get_val_set_tld()
 
+    train_df = train_df.with_columns(
+    pl.col("domain").str.replace_all(r"[\[\]]", ""))
+
+    val_df = val_df.with_columns(
+    pl.col("domain").str.replace_all(r"[\[\]]", ""))
+
     train_dataset = SubTaskDataset(
         train_df,
         max_len=cfg.max_len_char,
@@ -156,11 +162,6 @@ def train_char(cfg, args) :
                         "step/interval_tpp_loss": avg_tpp_interval,
                         "step/interval_tov_loss": avg_tov_interval,
                     })
-
-                interval_loss_sum_total = 0 
-                interval_loss_sum_mtp = 0
-                interval_loss_sum_tpp = 0
-                interval_loss_sum_tov = 0
 
                 train_loop.write(f"[Step {global_step} Interval Log]: Train Loss: {avg_total_interval:.4f}")
 

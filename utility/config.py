@@ -14,7 +14,7 @@ class DatasetConfig:
 class PretrainConfig:
     # Data
     max_len_char: int = 87 # 77
-    vocab_size_char: int = 43
+    vocab_size_char: int = 44
     text_col: str = "domain"
     label_col: str = "label"
     
