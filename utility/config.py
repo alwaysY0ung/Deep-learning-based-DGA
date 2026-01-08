@@ -4,16 +4,23 @@ import datetime
 import sys, os
 
 @dataclass
+class DatasetConfig:
+    train_size = 1_500_000
+    val_size = 150_000
+    # The rest is for test size
+    
+
+@dataclass
 class PretrainConfig:
     # Data
-    max_len_char: int = 77
+    max_len_char: int = 87 # 77
     vocab_size_char: int = 43
     text_col: str = "domain"
     label_col: str = "label"
     
     # Vocabulary (Subword)
-    max_len_subword: int = 30
-    vocab_size_subword: int = 30522
+    max_len_subword: int = 40 # 30
+    vocab_size_subword: int = 34926
     min_freq_subword: int = 2
     use_bert_pretokenizer: bool = False
     
@@ -55,9 +62,9 @@ class FinetuningConfig:
     nhead: int = 8
     num_layers: int = 12
     dim_feedforward: int = 768
-    max_len_token: int = 30
-    max_len_char: int = 77
-    vocab_size_token: int = 30522 # tokenizer_m.vocab_size
+    max_len_token: int = 40 # 30
+    max_len_char: int = 87 # 77
+    vocab_size_token: int = 34926 # tokenizer_m.vocab_size = 30522 + 4403 + 1
     vocab_size_char: int = 43
 
     num_epochs: int = 100
