@@ -33,3 +33,6 @@ Tokenizer/tokenizer_year.py
 Tokenizer/tokenizer-*.json
 
 figure/
+
+test_copy.ipynb
+test_dataset.py
