@@ -95,8 +95,7 @@ def test_by_year(cfg, args, model, tokenizer, device):
             test_df,
             tokenizer=tokenizer,
             max_len_t=cfg.max_len_subword,
-            max_len_c=cfg.max_len_char,
-            clf_norm=args.clf_norm
+            max_len_c=cfg.max_len_char
         )
 
         dataloader = DataLoader(
@@ -215,8 +214,7 @@ def test_by_family(cfg, args, model, tokenizer, device):
             test_df,
             tokenizer=tokenizer,
             max_len_t=cfg.max_len_subword,
-            max_len_c=cfg.max_len_char,
-            clf_norm=args.clf_norm
+            max_len_c=cfg.max_len_char
         )
 
         dataloader = DataLoader(
@@ -292,7 +290,7 @@ def main() :
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, required=True, help="Path to model checkpoint")
     parser.add_argument("--test_type", type=str, choices=["year", "family"], default="year", help="Test type")
-    parser.add_argument("--clf_norm", type=str, default='pool', choices=['cls', 'pool'])
+    parser.add_argument("--clf_norm", type=str, default='cls', choices=['cls', 'pool'])
     parser.add_argument("--save", type=bool, default=False, help="Save results")
     parser.add_argument("--project_name", type=str, default="proposal", help="Wandb project name")
     parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")
@@ -335,7 +333,7 @@ def main() :
         max_len=cfg.max_len_subword
     )
 
-    model = FineTuningModel(pt_model_t, pt_model_c).to(device)
+    model = FineTuningModel(pt_model_t, pt_model_c, clf_norm=args.clf_norm).to(device)
 
     state = torch.load(path_model.joinpath(args.model_path), map_location=device)
     model.load_state_dict(state, strict=False)
