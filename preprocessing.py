@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import Dataset
 import numpy as np
 import random
+import re
 
 
 class SpecialIDs:
@@ -13,13 +14,9 @@ class SpecialIDs:
     trunc_id: int = 5
 
 
-def mtp_dataset(inputs, special_ids, max_len, mask_ratio=0.15, ignore_idx=-100, type='char') :
+def mtp_dataset(inputs, special_ids, max_len, mask_ratio=0.15, ignore_idx=-100, max_special_id=4408) :
     labels = np.full(max_len, ignore_idx, dtype=np.int64)
-
-    if type == 'subword':
-        non_padding_indices = np.where(inputs > 4408)[0]
-    elif type == 'char' :
-        non_padding_indices = np.where(inputs > 5)[0]
+    non_padding_indices = np.where(inputs > max_special_id)[0]
 
     if len(non_padding_indices) <= 1:
         return inputs, labels
@@ -38,10 +35,10 @@ def mtp_dataset(inputs, special_ids, max_len, mask_ratio=0.15, ignore_idx=-100, 
     return masked_inputs, labels
 
 
-def tpp_dataset(inputs, special_ids, ignore_idx=-100) :
+def tpp_dataset(inputs, special_ids, ignore_idx=-100, max_special_id=4408) :
     labels = np.copy(inputs)
     labels[inputs == special_ids.pad_id] = ignore_idx
-    non_padding_indices = np.where(inputs > 5)[0]
+    non_padding_indices = np.where(inputs > max_special_id)[0]
 
     if len(non_padding_indices) <= 1:
         return inputs, labels
@@ -59,15 +56,10 @@ def tpp_dataset(inputs, special_ids, ignore_idx=-100) :
     return shuffled_inputs, labels
 
 
-def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5, type='char') :
+def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5, max_special_id=4408) :
     processed_inputs = np.copy(inputs)
-
-    if type == 'subword':
-        non_padding_indices = np.where(inputs > 4408)[0]
-        tld_indices = np.where((inputs >= 6) & (inputs <= 4408))[0]
-    elif type == 'char' :
-        non_padding_indices = np.where(inputs > 5)[0]
-        tld_indices = np.array([], dtype=int)
+    non_padding_indices = np.where(inputs > max_special_id)[0]
+    tld_indices = np.where((inputs >= 6) & (inputs <= max_special_id))[0]
 
     if len(non_padding_indices) <= 1:
         is_scramble = False
@@ -119,15 +111,17 @@ class SubTaskDataset(Dataset) :
         self.sep_idx = special_ids.sep_id
         self.trunc_idx = special_ids.trunc_id
         self.type = type
+        self.tokenizer = tokenizer
+        if self.tokenizer == None :
+            raise ValueError("Tokenizer must be required.")
+        decoded_added_tokens = self.tokenizer.added_tokens_decoder
+        self.max_special_id = len(decoded_added_tokens) - 1
         if self.type == 'char' :
             self.char_list = list("abcdefghijklmnopqrstuvwxyz0123456789-.")
-            self.special_tokens = ['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[MASK]', '[TRUNC]']
+            sorted_ids = sorted(decoded_added_tokens.keys())
+            self.special_tokens = [decoded_added_tokens[idx].content for idx in sorted_ids]
             self.all_tokens = self.special_tokens + self.char_list
-
             self.char2id = {char: idx for idx, char in enumerate(self.all_tokens)}
-        self.tokenizer = tokenizer
-        if self.type == 'subword' and self.tokenizer == None :
-            raise ValueError("Tokenizer must be required.")
             
 
     def domain_to_token(self, domain) :
@@ -136,7 +130,16 @@ class SubTaskDataset(Dataset) :
             encoded = self.tokenizer(domain, add_special_tokens=False)
             token_indices = encoded["input_ids"]
         elif self.type == 'char' :
-            token_indices = [self.char2id.get(c, self.unk_idx) for c in domain]
+            tlds = re.findall(r"\[\.[a-zA-Z0-9-]+\]", domain)
+            sld = domain
+            for tld in tlds :
+                sld = sld.replace(tld, "")
+
+            token_indices = [self.char2id.get(c, self.unk_idx) for c in sld]
+
+            for tld in tlds :
+                tld_token_id = self.char2id.get(tld, self.unk_idx)
+                token_indices.append(tld_token_id)
 
         # zero padding
         if len(token_indices) > self.max_len - 2:
@@ -148,13 +151,13 @@ class SubTaskDataset(Dataset) :
         return np.array(token_indices, dtype=np.int64)
 
     def mtp(self, inputs) :
-        return mtp_dataset(inputs, self.special_ids, self.max_len, self.mask_ratio, self.ignore_idx, self.type)
+        return mtp_dataset(inputs, self.special_ids, self.max_len, self.mask_ratio, self.ignore_idx, self.max_special_id)
 
     def tpp(self, inputs) :
-        return tpp_dataset(inputs, self.special_ids, self.ignore_idx)
+        return tpp_dataset(inputs, self.special_ids, self.ignore_idx, self.max_special_id)
 
     def tov(self, inputs) :
-        return tov_dataset(inputs, self.special_ids, self.max_len, self.shuffle_prob, self.type)
+        return tov_dataset(inputs, self.special_ids, self.max_len, self.shuffle_prob, self.max_special_id)
 
     def __len__(self):
         return self.df.shape[0]
@@ -200,7 +203,9 @@ class FineTuningDataset(Dataset) :
         self.sep_idx = special_ids.sep_id
         self.trunc_idx = special_ids.trunc_id
         self.char_list = list("abcdefghijklmnopqrstuvwxyz0123456789-.")
-        self.special_tokens = ['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[MASK]', '[TRUNC]']
+        decoded_added_tokens = self.tokenizer.added_tokens_decoder
+        sorted_ids = sorted(decoded_added_tokens.keys())
+        self.special_tokens = [decoded_added_tokens[idx].content for idx in sorted_ids]
         self.all_tokens = self.special_tokens + self.char_list
 
         self.char2id = {char: idx for idx, char in enumerate(self.all_tokens)}
@@ -208,8 +213,17 @@ class FineTuningDataset(Dataset) :
 
     def domain_to_ids(self, domain):
         domain = domain.lower()
-        
-        token_indices = [self.char2id.get(c, self.unk_idx) for c in domain]
+
+        tlds = re.findall(r"\[\.[a-zA-Z0-9-]+\]", domain)
+        sld = domain
+        for tld in tlds :
+            sld = sld.replace(tld, "")
+
+        token_indices = [self.char2id.get(c, self.unk_idx) for c in sld]
+
+        for tld in tlds :
+            tld_token_id = self.char2id.get(tld, self.unk_idx)
+            token_indices.append(tld_token_id)
 
         if len(token_indices) > self.max_len_c - 3:
             token_indices = token_indices[-(self.max_len_c - 3):]
@@ -254,11 +268,9 @@ if __name__ == '__main__':
     import polars as pl
 
     df = pl.DataFrame({'domain': ['google2ec[.co][.kr]'], 'label': [1]})
-    df = df.with_columns(
-    pl.col("domain").str.replace_all(r"[\[\]]", ""))
 
     tokenizer = PreTrainedTokenizerFast(tokenizer_file='./artifacts/tokenizer/tokenizer-2-34926-both-tld.json')
-    dataset = SubTaskDataset(df, tokenizer=tokenizer, max_len=10, type='char')
+    dataset = SubTaskDataset(df, tokenizer=tokenizer, max_len=20, type='char')
 
     X_mtp, Y_mtp, X_tpp, Y_tpp, X_tov, Y_tov = dataset[0]
 
@@ -269,16 +281,16 @@ if __name__ == '__main__':
     print(f"X TPP(앞 20개): {X_tpp[:20].tolist()}")
     print(f'Y TPP(앞 20개): {Y_tpp[:20].tolist()}')
     print(f"X TOV(앞 20개): {X_tov[:20].tolist()}")
-    print(f'Y TOV(앞 20개): {Y_tov}')
+    print(f'Y TOV         : {Y_tov}')
     # print("토큰 복원: ", tokenizer.decode(X_mtp))
 
-    # dataset = FineTuningDataset(df, tokenizer=tokenizer)
+    dataset = FineTuningDataset(df, tokenizer=tokenizer)
 
-    # X_token, X_char, y = dataset[0]
+    X_token, X_char, y = dataset[0]
 
-    # print("\n도메인 원본:", df.row(0)[0])
-    # print("전처리된 X (길이, 토큰):", X_token.shape) 
-    # print("전처리된 X (앞 20개, 토큰):", X_token[:20].tolist())
-    # print("전처리된 X (길이, 문자):", X_char.shape) 
-    # print("전처리된 X (앞 20개, 문자):", X_char[:20].tolist())
-    # print("라벨 y:", y.item())
+    print("\n도메인 원본:", df.row(0)[0])
+    print("전처리된 X (길이, 토큰):", X_token.shape) 
+    print("전처리된 X (앞 20개, 토큰):", X_token[:20].tolist())
+    print("전처리된 X (길이, 문자):", X_char.shape) 
+    print("전처리된 X (앞 20개, 문자):", X_char[:20].tolist())
+    print("라벨 y:", y.item())
