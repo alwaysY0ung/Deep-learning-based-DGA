@@ -9,43 +9,68 @@ import tqdm
 import tldextract
 import sys
 
-# 추출기 객체 생성 (캐싱을 통해 성능 최적화)
-extract = tldextract.TLDExtract(include_psl_private_domains=True)
+# tldextract가 main parts를 인식하지 못하여 모든 부분을 [.TLD]로 처리하는 경우를 대비하여 새 wrap_tld2 개발.
+# 두 가지 옵션의 추출기 미리 생성
+extract_true = tldextract.TLDExtract(include_psl_private_domains=True)
+extract_false = tldextract.TLDExtract(include_psl_private_domains=False)
+
+def get_processed_result(ext):
+    """tldextract 객체의 결과물을 받아 대괄호 변환된 문자열을 반환하는 내부 함수"""
+    # 1. 앞부분(Subdomain + Domain) 결합
+    main_parts = []
+    if ext.subdomain:
+        main_parts.append(ext.subdomain)
+    if ext.domain:
+        main_parts.append(ext.domain)
+    prefix = ".".join(main_parts)
+    
+    # 2. Suffix(TLD) 가공: "co.kr" -> "[.co][.kr]"
+    wrapped_suffix = "".join([f"[.{part}]" for part in ext.suffix.split('.') if part])
+    
+    return f"{prefix}{wrapped_suffix}"
 
 def wrap_tld(domain):
     """
     tldextract로 Suffix를 분리한 후, 
-    Suffix 내의 마침표를 기준으로 각각 대괄호 처리를 합니다.
+    Suffix 내의 마침표를 기준으로 각각 대괄호 처리 수행.
     예: naver.co.kr -> naver[.co][.kr]
         sub.example.com -> sub.example[.com]
     """
     if not domain:
         return domain
-        
-    try:
-        ext = extract(domain)
-        
-        # 1. Suffix(TLD) 가공: "co.kr" -> "[.co][.kr]"
-        if ext.suffix:
-            # 점으로 나누고 각각 [.부분] 형태로 변환
-            wrapped_suffix = "".join([f"[.{part}]" for part in ext.suffix.split('.')])
-        else:
-            wrapped_suffix = ""
-
-        # 2. 앞부분(Subdomain + Domain) 결합
-        main_parts = []
-        if ext.subdomain:
-            main_parts.append(ext.subdomain)
-        if ext.domain:
-            main_parts.append(ext.domain)
-            
-        prefix = ".".join(main_parts)
-        
-        return f"{prefix}{wrapped_suffix}"
     
-    except Exception:
-        # 분석 실패 시 원본 혹은 기본 처리 결과 반환
-        return domain
+    domain = domain.lower().strip()
+    parts = domain.split('.')
+    
+    # --- 조건 1: 요소가 2개인 경우 강제 지정 ---
+    # 예: googleapis.com -> googleapis[.com]
+    if len(parts) == 2:
+        return f"{parts[0]}[.{parts[1]}]"
+    
+    # --- 조건 2: 2개가 아닐 경우 (3개 이상 혹은 1개) ---
+    # Step A: 기존 로직(Private 도메인 포함)으로 처리
+    ext_t = extract_true(domain)
+    result = get_processed_result(ext_t)
+    
+    # --- 조건 3: 결과가 [ 로 시작할 경우 (Prefix가 비어있음) ---
+    if result.startswith('['):
+        # Step B: 옵션을 False로 일시적으로 바꿔서 처리
+        ext_f = extract_false(domain)
+        result = get_processed_result(ext_f)
+        
+        # Step C: 여전히 [ 로 시작한다면 첫 번째 요소만 SLD로 강제 승격
+        if result.startswith('['):
+            if len(parts) >= 1:
+                sld = parts[0]
+                remaining = parts[1:]
+                # 나머지가 있다면 TLD로, 없다면 그냥 SLD만 반환
+                if remaining:
+                    wrapped_rem = "".join([f"[.{p}]" for p in remaining if p])
+                    return f"{sld}{wrapped_rem}"
+                else:
+                    return sld # 예: "com"만 들어온 경우 등
+                    
+    return result   
 
 def df_prep(df, type):
     if type=="benign":
@@ -56,6 +81,7 @@ def df_prep(df, type):
         df['label'] = 1
     df = df[["domain", "label"]].copy()
     df['domain'] = df['domain'].str.lower()
+    df = df[~df['domain'].str.contains('_', regex=False, na=False)]
     df['domain'] = df['domain'].apply(wrap_tld)
     return df
 
@@ -190,3 +216,8 @@ if __name__ == "__main__":
             train_d = path_dir_root.joinpath(f'dataset/tld/T{y}_dga_train_tld.parquet')
             if dga.exists() and not train_d.exists():
                 split_parquet_file(str(dga), DatasetConfig.train_size, DatasetConfig.val_size)
+
+    # print(wrap_tld("blog.naver.com"))
+    # ext_f = extract_false("blog.naver.com")
+    # result = get_processed_result(ext_f)
+    # print(result)
