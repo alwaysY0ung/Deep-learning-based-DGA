@@ -14,13 +14,13 @@ class DatasetConfig:
 class PretrainConfig:
     # Data
     max_len_char: int = 82 # 77
-    vocab_size_char: int = 4447
+    vocab_size_char: int = 2273 # 44 + 4403 -> 45 + 1869
     text_col: str = "domain"
     label_col: str = "label"
     
     # Vocabulary (Subword)
     max_len_subword: int = 35 # 30
-    vocab_size_subword: int = 34926
+    vocab_size_subword: int = 32393
     min_freq_subword: int = 2
     use_bert_pretokenizer: bool = False
     
@@ -64,8 +64,8 @@ class FinetuningConfig:
     dim_feedforward: int = 768
     max_len_token: int = 35 # 30
     max_len_char: int = 82 # 77
-    vocab_size_token: int = 34926 # tokenizer_m.vocab_size = 30522 + 4403 + 1
-    vocab_size_char: int = 4447
+    vocab_size_token: int = 32393 # tokenizer_m.vocab_size = 30522 + 4403 + 1
+    vocab_size_char: int = 2273
 
     num_epochs: int = 100
     batch_size: int = 128
