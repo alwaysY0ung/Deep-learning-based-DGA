@@ -31,21 +31,29 @@ def train(file_paths,
         text_col: str,
         vocab_size: int,
         min_freq: int,
-        use_bert_pretokenizer: bool = True,
-        save_path : str = "tokenizer-{min_freq}-{vocab_size}-tld.json"
+        save_path : str,
+        freq_th: int = 10,
+        use_bert_pretokenizer: bool = True
     ) -> Tokenizer:
 
-    print("[.tld] 추출 중...")
+    print("[.tld] 추출 중...: 빈도수 10 이상.")
     tld_df = (
-        pl.scan_parquet(file_paths)  # 리스트를 넣으면 Polars가 모든 파일을 스캔
+        pl.scan_parquet(paths)
         .select(pl.col(text_col).str.extract_all(r"\[\.[a-zA-Z0-9-]+\]"))
         .explode(text_col)
-        .unique()
         .drop_nulls()
-        .collect() # 최종 결과를 DataFrame으로 가져옴
+        # TLD별로 그룹화하여 개수를 셉니다.
+        .group_by(text_col)
+        .len(name="count") 
+        # 빈도가 높은 순서대로 정렬 (선택 사항)
+        .sort("count", descending=True)
+        .collect()
     )
-    tld_special_tokens = tld_df[text_col].to_list()
-    print(f"Unique TLD tokens 발견: {len(tld_special_tokens)}")
+
+    filtered_tld_df = tld_df.filter(pl.col("count") >= freq_th)
+    output_csv_path = str(save_path)[:-5] + ".csv"
+    filtered_tld_df.write_csv(output_csv_path)
+    tld_special_tokens = filtered_tld_df[text_col].to_list()
 
     tokenizer = Tokenizer(models.WordPiece(unk_token="[UNK]"))
     tokenizer.normalizer = normalizers.Sequence([
@@ -56,10 +64,10 @@ def train(file_paths,
     if use_bert_pretokenizer:
         tokenizer.pre_tokenizer = pre_tokenizers.BertPreTokenizer()
 
-    # Token IDs: [PAD]:0, [UNK]:1, [CLS]:2, [SEP]:3, [MASK]:4, [TRUNC]:5, TLDs:6~ (순서대로 할당)
-    special_tokens = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "[TRUNC]"] + tld_special_tokens
+    # Token IDs: [PAD]:0, [UNK]:1, [CLS]:2, [SEP]:3, [MASK]:4, [TRUNC]:5, [SPARSE_TLD]:6, TLDs:7~ (순서대로 할당)
+    special_tokens = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "[TRUNC]", "[SPARSE_TLD]"] + tld_special_tokens
     trainer = trainers.WordPieceTrainer(
-        vocab_size=vocab_size, # = 30522(bert) + 1 + len(tld_special_tokens)
+        vocab_size=vocab_size, # 32393 = 30522(bert) + 2 + 1869:len(tld_special_tokens)
         min_frequency=min_freq,
         special_tokens=special_tokens)
 
@@ -98,24 +106,27 @@ if __name__ == "__main__":
             text_col="domain",
             vocab_size=vocab,
             min_freq=minfreq,
+            save_path = tokenizer_path,
+            freq_th=10,
             use_bert_pretokenizer=True
         )
     else:
         trained_tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_path))
 
-    # 검증: [.com]이 하나의 토큰으로 나오는지 확인
-    test_domain = "google[.com]"
-    encoded = trained_tokenizer(test_domain)
-    print(f"Test Sentence: {test_domain}")
-    print(f"Encoded: {encoded}\n")
+    # # 새로운 wrap_tld 검증: [.com]이 하나의 토큰으로 나오는지 확인
+    # test_domain = "getwhatyouwant[.co][.ru]"
+    # encoded = trained_tokenizer(test_domain)
+    # print(f"Test Sentence: {test_domain}")
+    # print(f"Encoded: {encoded}\n")
 
-    tokens = trained_tokenizer.tokenize(test_domain)
-    ids = trained_tokenizer.convert_tokens_to_ids(tokens)
-    for t, i in zip(tokens, ids):
-        print(f"{t:10s} -> {i}")
+    # tokens = trained_tokenizer.tokenize(test_domain)
+    # ids = trained_tokenizer.convert_tokens_to_ids(tokens)
+    # for t, i in zip(tokens, ids):
+    #     print(f"{t:10s} -> {i}")
 
-    input_ids = encoded["input_ids"]
-    tokens = trained_tokenizer.convert_ids_to_tokens(input_ids)
-    print(tokens)
+    # input_ids = encoded["input_ids"]
+    # tokens = trained_tokenizer.convert_ids_to_tokens(input_ids)
+    # print(tokens)
 
-    # 예상 결과: ['[CLS]', 'google', '[.com]', '[SEP]']
+    # # test_domain = "google[.com]"
+    # # 예상 결과: ['[CLS]', 'google', '[.com]', '[SEP]']
