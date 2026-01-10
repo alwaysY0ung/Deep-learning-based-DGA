@@ -33,3 +33,6 @@ Tokenizer/tokenizer_year.py
 Tokenizer/tokenizer-*.json
 
 figure/
+
+tld_count.py
+tld_counts.csv
