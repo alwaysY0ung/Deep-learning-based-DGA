@@ -265,8 +265,8 @@ def main():
     wandb.define_metric("val/*", step_metric="global_step")
 
     # 데이터셋
-    train_df = dataset.get_train_set()
-    val_df = dataset.get_val_set()
+    train_df, _ = dataset.get_train_set_tld()
+    val_df = dataset.get_val_set_tld()
 
     train_dataset = FineTuningDataset(train_df, tokenizer=tokenizer, 
                                       max_len_t=args.max_len_token, max_len_c=args.max_len_char)
