@@ -14,7 +14,7 @@ import pathlib
 import glob
 import wandb
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
-from utility.dataset import get_test_set_20, get_test_set_21, get_test_set_22, get_test_set_23, get_test_set_24, get_test_set_25
+from utility.dataset import get_test_set_20_tld, get_test_set_21_tld, get_test_set_22_tld, get_test_set_23_tld, get_test_set_24_tld, get_test_set_25_tld
 from utility.config import PretrainConfig
 from utility.path import path_dga_scheme, path_model,path_tokenizer, path_figure 
 
@@ -82,13 +82,13 @@ def test_by_year(cfg, args, model, tokenizer, device):
 
     for year in years:
         if year in [24, 25]:
-            test_df = get_test_set_24() if year == 24 else get_test_set_25()
+            test_df = get_test_set_24_tld() if year == 24 else get_test_set_25_tld()
         else:
             test_df = (
-                get_test_set_20() if year == 20 else
-                get_test_set_21() if year == 21 else
-                get_test_set_22() if year == 22 else
-                get_test_set_23()
+                get_test_set_20_tld() if year == 20 else
+                get_test_set_21_tld() if year == 21 else
+                get_test_set_22_tld() if year == 22 else
+                get_test_set_23_tld()
             )
 
         dataset = FineTuningDataset(
@@ -228,9 +228,7 @@ def test_by_family(cfg, args, model, tokenizer, device):
         test_loop = tqdm(dataloader, desc='[Test by family]', bar_format='{l_bar}{r_bar}', leave=False)
 
         metrics, _, _ = test_finetuning(
-            model,
-            device,
-            test_loop
+            model, device, test_loop
         )
 
         acc_all.append(metrics["accuracy"])
@@ -295,23 +293,18 @@ def main() :
     parser.add_argument("--project_name", type=str, default="proposal", help="Wandb project name")
     parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")
     parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging")
-    parser.add_argument("--use_bert_pretokenizer", type=bool, default=False, help="Use BERT pretokenizer")
-    parser.add_argument("--tokenizer_min_freq", type=int, default=0, help="Tokenizer min frequency")
-    parser.add_argument("--tokenizer_vocab_size", type=int, default=30522, help="Tokenizer vocab size")
+    parser.add_argument("--tokenizer_min_freq", type=int, default=2, help="Tokenizer min frequency")
+    parser.add_argument("--tokenizer_vocab_size", type=int, default=32393, help="Tokenizer vocab size")
 
     args = parser.parse_args()
     args.use_wandb = not args.no_wandb
 
     cfg = PretrainConfig(
-        use_bert_pretokenizer=args.use_bert_pretokenizer,
         min_freq_subword=args.tokenizer_min_freq,
         vocab_size_subword=args.tokenizer_vocab_size
     )
 
-    if cfg.use_bert_pretokenizer:
-        tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased", use_fast=True)
-    else:
-        tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both.json")))
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both-tld.json")))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
