@@ -12,9 +12,10 @@ from model import PretrainedModel
 from tqdm import tqdm
 import datetime
 import wandb
-from utility.dataset import get_train_set_pretrain, get_train_set, get_val_set
+from utility.dataset import get_train_set_tld, get_val_set_tld
 from utility.config import PretrainConfig
 from utility.path import path_model, path_tokenizer
+from make_tokenizer_tld import train
 
 
 def log_artifact(run, path, name, type_="model"):
@@ -32,13 +33,26 @@ def train_char(cfg, args) :
     if args.use_wandb:
         run = wandb.init(project=args.project_name, name=args.run_name, config=vars(cfg), tags=['valid'])
 
-    # train_df = get_train_set_pretrain()
-    train_df = get_train_set()
-    val_df = get_val_set()
+    tokenizer_path = path_tokenizer.joinpath((f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both-tld.json"))
+    if not tokenizer_path.exists():
+        _, paths = get_train_set_tld()
+        train(file_paths=paths,
+            text_col="domain",
+            vocab_size=cfg.vocab_size_subword,
+            min_freq=cfg.min_freq_subword,
+            use_bert_pretokenizer=True,
+            save_path=tokenizer_path)
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_path))
+    print(f"Loaded Tokenizer Vocab Size: {tokenizer.vocab_size}")
+    assert tokenizer.vocab_size == cfg.vocab_size_subword, "Tokenizer vocab size does not match!"
+
+    train_df, _ = get_train_set_tld()
+    val_df = get_val_set_tld()
 
     train_dataset = SubTaskDataset(
         train_df,
         max_len=cfg.max_len_char,
+        tokenizer=tokenizer,
         mask_ratio=cfg.mask_ratio,
         type = 'char'
     )
@@ -54,6 +68,7 @@ def train_char(cfg, args) :
     val_dataset = SubTaskDataset(
         val_df,
         max_len=cfg.max_len_char,
+        tokenizer=tokenizer,
         mask_ratio=cfg.mask_ratio,
         type = 'char'
     )
@@ -157,11 +172,6 @@ def train_char(cfg, args) :
                         "step/interval_tov_loss": avg_tov_interval,
                     })
 
-                interval_loss_sum_total = 0 
-                interval_loss_sum_mtp = 0
-                interval_loss_sum_tpp = 0
-                interval_loss_sum_tov = 0
-
                 train_loop.write(f"[Step {global_step} Interval Log]: Train Loss: {avg_total_interval:.4f}")
 
                 interval_loss_sum_total = 0 
@@ -171,7 +181,7 @@ def train_char(cfg, args) :
 
             if global_step % args.val_check_interval == 0:
                 val_loss = validate(model, val_dataloader, device, cfg, args)
-                train_loop.write(f"[subword] step {global_step} val_loss={val_loss:.4f}")
+                train_loop.write(f"[char] step {global_step} val_loss={val_loss:.4f}")
 
                 if val_loss < best_loss:
                     best_loss = val_loss
@@ -204,14 +214,21 @@ def train_subword(cfg, args) :
     if args.use_wandb:
         run = wandb.init(project=args.project_name, name=args.run_name, config=vars(cfg), tags=['valid'])
 
-    if cfg.use_bert_pretokenizer :
-        tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased', use_fast=True)
-    else :
-        tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both.json")))
+    tokenizer_path = path_tokenizer.joinpath((f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both-tld.json"))
+    if not tokenizer_path.exists():
+        _, paths = get_train_set_tld()
+        train(file_paths=paths,
+            text_col="domain",
+            vocab_size=cfg.vocab_size_subword,
+            min_freq=cfg.min_freq_subword,
+            use_bert_pretokenizer=True,
+            save_path=tokenizer_path)
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_path))
+    print(f"Loaded Tokenizer Vocab Size: {tokenizer.vocab_size}")
+    assert tokenizer.vocab_size == cfg.vocab_size_subword, "Tokenizer vocab size does not match!"
 
-    # train_df = get_train_set_pretrain()
-    train_df = get_train_set()
-    val_df = get_val_set()
+    train_df, _ = get_train_set_tld()
+    val_df = get_val_set_tld()
 
     train_dataset = SubTaskDataset(
         train_df,
@@ -436,6 +453,7 @@ def validate(model, dataloader, device, cfg, args):
 
 def main() :
    parser = argparse.ArgumentParser()
+   cfg = PretrainConfig()
    parser.add_argument("--mode", choices=["char", "subword"], required=True,
                         help="Pre-training mode: char or subword")
    parser.add_argument("--save", type=str, default="pretrained.pt", help="Path to save model state dict")
@@ -446,17 +464,15 @@ def main() :
    parser.add_argument("--project_name", type=str, default="dga-pretrain", help="Wandb project name")
    parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")
    parser.add_argument("--tov_norm", type=str, choices=["cls", "pool"], default="cls", help="TOV pooling strategy")
-   parser.add_argument("--use_bert_pretokenizer", type=bool, default=False, help="Use BERT pretokenizer")
-   parser.add_argument("--tokenizer_min_freq", type=int, default=0, help="Tokenizer min frequency")
-   parser.add_argument("--tokenizer_vocab_size", type=int, default=30522, help="Tokenizer vocab size")
+   parser.add_argument("--tokenizer_min_freq", type=int, default=cfg.min_freq_subword, help="Tokenizer min frequency")
+   parser.add_argument("--tokenizer_vocab_size", type=int, default=cfg.vocab_size_subword, help="Tokenizer vocab size")
 
    args = parser.parse_args()
    args.use_wandb = not args.no_wandb
 
    cfg = PretrainConfig(
         save_path=args.save, 
-        tov_norm=args.tov_norm, 
-        use_bert_pretokenizer=args.use_bert_pretokenizer,
+        tov_norm=args.tov_norm,
         min_freq_subword=args.tokenizer_min_freq,
         vocab_size_subword=args.tokenizer_vocab_size
     )

@@ -4,16 +4,23 @@ import datetime
 import sys, os
 
 @dataclass
+class DatasetConfig:
+    train_size = 1_500_000
+    val_size = 150_000
+    # The rest is for test size
+    
+
+@dataclass
 class PretrainConfig:
     # Data
-    max_len_char: int = 77
-    vocab_size_char: int = 43
+    max_len_char: int = 82 # 77 + 5 (TLD 포함함에 따라 5 늘림)
+    vocab_size_char: int = 2273 # 44 + 4403 -> 45 + 1869
     text_col: str = "domain"
     label_col: str = "label"
     
     # Vocabulary (Subword)
-    max_len_subword: int = 30
-    vocab_size_subword: int = 30522
+    max_len_subword: int = 35 # 30
+    vocab_size_subword: int = 32393
     min_freq_subword: int = 2
     use_bert_pretokenizer: bool = False
     
@@ -47,18 +54,18 @@ def get_wandb_mode():
 
 @dataclass
 class FinetuningConfig:
-    token_weights_path: str = '1224_1609_subword_step_2046000.pt'
-    char_weights_path: str = '1226_1655_char_step_3098000.pt'
-    tokenizer_path: str = "tokenizer-0-30522-both.json"
+    token_weights_path: str = '0110_1545_pretrained_step_2080000.pt'
+    char_weights_path: str = '0110_1541_char_step_1140000.pt'
+    tokenizer_path: str = "tokenizer-2-32393-both-tld.json"
 
     d_model: int = 256
     nhead: int = 8
     num_layers: int = 12
     dim_feedforward: int = 768
-    max_len_token: int = 30
-    max_len_char: int = 77
-    vocab_size_token: int = 30522 # tokenizer_m.vocab_size
-    vocab_size_char: int = 43
+    max_len_token: int = 35 # 30
+    max_len_char: int = 82 # 77
+    vocab_size_token: int = 32393 # tokenizer_m.vocab_size = 30522 + 4403 + 1
+    vocab_size_char: int = 2273
 
     num_epochs: int = 100
     batch_size: int = 128
