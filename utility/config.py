@@ -13,7 +13,7 @@ class DatasetConfig:
 @dataclass
 class PretrainConfig:
     # Data
-    max_len_char: int = 82 # 77
+    max_len_char: int = 82 # 77 + 5 (TLD 포함함에 따라 5 늘림)
     vocab_size_char: int = 2273 # 44 + 4403 -> 45 + 1869
     text_col: str = "domain"
     label_col: str = "label"
@@ -54,9 +54,9 @@ def get_wandb_mode():
 
 @dataclass
 class FinetuningConfig:
-    token_weights_path: str = '1224_1609_subword_step_2046000.pt'
-    char_weights_path: str = '1226_1655_char_step_3098000.pt'
-    tokenizer_path: str = "tokenizer-0-30522-both.json"
+    token_weights_path: str = '0110_1545_pretrained_step_2080000.pt'
+    char_weights_path: str = '0110_1541_char_step_1140000.pt'
+    tokenizer_path: str = "tokenizer-2-32393-both-tld.json"
 
     d_model: int = 256
     nhead: int = 8
