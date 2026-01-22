@@ -300,6 +300,7 @@ def main() :
     parser.add_argument("--project_name", type=str, default="proposal", help="Wandb project name")
     parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")
     parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging")
+    parser.add_argument("--use_bert", default=False, help="Use BERT backbone")
     parser.add_argument("--tokenizer_min_freq", type=int, default=2, help="Tokenizer min frequency")
     parser.add_argument("--tokenizer_vocab_size", type=int, default=32393, help="Tokenizer vocab size")
 
