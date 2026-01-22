@@ -3,6 +3,7 @@ from torch.utils.data import Dataset
 import numpy as np
 import random
 import re
+from transformers import AutoTokenizer
 
 
 class SpecialIDs:
@@ -189,13 +190,15 @@ class SubTaskDataset(Dataset) :
   
     
 class FineTuningDataset(Dataset) :
-    def __init__(self, df, domain_col='domain', label_col='label', special_ids=SpecialIDs, max_len_t=30, max_len_c=77, tokenizer=None):
+    def __init__(self, df, domain_col='domain', label_col='label', special_ids=SpecialIDs, max_len_t=30, max_len_c=77, tokenizer=None, use_bert=False):
         self.df = df
         self.domain_col = domain_col
         self.label_col = label_col
         self.max_len_t = max_len_t
         self.max_len_c = max_len_c
         self.tokenizer = tokenizer
+        self.use_bert = use_bert
+
         if tokenizer == None :
             raise ValueError("Tokenizer must be required.")
         self.special_ids = special_ids
@@ -215,6 +218,9 @@ class FineTuningDataset(Dataset) :
         self.special2id = {token: idx for idx, token in enumerate(self.special_tokens)}
         self.char2id = {char: idx for idx, char in enumerate(self.all_tokens)}
         self.id2char = {idx: char for idx, char in enumerate(self.all_tokens)}
+
+        if self.use_bert :
+            self.bert_tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
 
     def domain_to_ids(self, domain):
         domain = domain.lower()
@@ -266,6 +272,19 @@ class FineTuningDataset(Dataset) :
             ids += [self.pad_idx] * (self.max_len_t - len(ids))
         
         return np.array(ids, dtype=np.int64)
+
+    def domain_to_bert(self, domain) :
+        domain = domain.lower()
+        domain = domain.replace("[", "").replace("]", "")
+        encoded = self.bert_tokenizer(
+            domain,
+            add_special_tokens=True,
+            max_length=self.max_len_t,
+            truncation=True,
+            padding='max_length',
+            return_tensors=None
+        )
+        return np.array(encoded['input_ids']), np.array(encoded['attention_mask'])
     
     def __len__(self):
         return self.df.shape[0]
@@ -275,7 +294,12 @@ class FineTuningDataset(Dataset) :
         X_token = self.domain_to_token(domain)
         X_char = self.domain_to_ids(domain)
         y = np.int64(label)
-        return torch.tensor(X_token, dtype=torch.long), torch.tensor(X_char, dtype=torch.long), torch.tensor(y, dtype=torch.long)
+
+        if self.use_bert :
+            X_bert, X_bert_mask = self.domain_to_bert(domain)
+            return torch.tensor(X_token, dtype=torch.long), torch.tensor(X_char, dtype=torch.long), torch.tensor(X_bert, dtype=torch.long), torch.tensor(X_bert_mask, dtype=torch.long), torch.tensor(y, dtype=torch.long)
+        else :
+            return torch.tensor(X_token, dtype=torch.long), torch.tensor(X_char, dtype=torch.long), torch.tensor(y, dtype=torch.long)
 
 if __name__ == '__main__':
 
@@ -285,6 +309,7 @@ if __name__ == '__main__':
     df = pl.DataFrame({'domain': ['google2ec[.co][.kww]'], 'label': [1]})
 
     tokenizer = PreTrainedTokenizerFast(tokenizer_file='./artifacts/tokenizer/tokenizer-2-32393-both-tld.json')
+    bert_tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
     dataset = SubTaskDataset(df, tokenizer=tokenizer, max_len=20, type='subword')
 
     X_mtp, Y_mtp, X_tpp, Y_tpp, X_tov, Y_tov = dataset[0]
@@ -299,13 +324,18 @@ if __name__ == '__main__':
     print(f'Y TOV         : {Y_tov}')
     print("토큰 복원: ", tokenizer.decode(X_mtp))
 
-    dataset = FineTuningDataset(df, tokenizer=tokenizer)
+    dataset = FineTuningDataset(df, tokenizer=tokenizer, use_bert=True)
 
-    X_token, X_char, y = dataset[0]
+    X_token, X_char, X_bert, bert_mask, y = dataset[0]
 
     print("\n도메인 원본:", df.row(0)[0])
     print("전처리된 X (길이, 토큰):", X_token.shape) 
     print("전처리된 X (앞 20개, 토큰):", X_token[:20].tolist())
     print("전처리된 X (길이, 문자):", X_char.shape) 
     print("전처리된 X (앞 20개, 문자):", X_char[:20].tolist())
+    print("전처리된 X (길이, BERT):", X_bert.shape) 
+    print("전처리된 X (앞 20개, BERT):", X_bert[:20].tolist())
+    print("전처리된 X (길이, BERT Mask):", bert_mask.shape) 
+    print("전처리된 X (앞 20개, BERT Mask):", bert_mask[:20].tolist())
+    print("토큰 복원: ", bert_tokenizer.decode(X_bert))
     print("라벨 y:", y.item())
