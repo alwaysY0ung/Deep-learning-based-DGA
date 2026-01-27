@@ -2,6 +2,7 @@ from transformers.models.bert.modeling_bert import BertModel
 import torch
 from torch import nn
 import math
+from mamba_ssm.models.mixer_seq_simple import MixerModel
 
 class TokenEmbedding(nn.Module):
     def __init__(self, vocab_size, d_model, padding_idx) :
@@ -85,28 +86,68 @@ class TPPHead(nn.Module) :
         return logtis
     
 class TOVHead(nn.Module):
-    def __init__(self, d_model, num_classes=2, dropout=0.1, tov_norm = 'cls'):
+    def __init__(
+        self, 
+        d_model, 
+        num_classes=2, 
+        dropout=0.1, 
+        tov_norm = 'cls', 
+        is_mamba = False, 
+        mamba_bidirectional=False
+    ):
+    
         super().__init__()
+
         self.tov_norm = tov_norm
+        self.mamba_bidirectional = mamba_bidirectional
+        self.is_mamba = is_mamba
+
         if tov_norm == "pool" :
             self.dense = nn.Linear(d_model * 2, d_model * 2)
             self.gelu = nn.GELU()
             self.dropout = nn.Dropout(dropout)
             self.classifier = nn.Linear(d_model * 2, num_classes)
-        else :
+        else : # cls
             self.dense = nn.Linear(d_model, d_model)
             self.gelu = nn.GELU()
             self.dropout = nn.Dropout(dropout)
             self.classifier = nn.Linear(d_model, num_classes)
         
-    def forward(self, sequence_output):
+    def forward(self, sequence_output, padding_mask=None):
+        """
+        sequence_output : (B, L, D)
+        padding_mask : (B, L) 
+                        : True for padding tokens, False for valid tokens
+                        : use this when we choose is_mamba=True. Cuz  we have to consider the last hidden-state's location
+        """
 
         if self.tov_norm == "pool" :
-            max_output = sequence_output.max(dim=1).values
-            avg_ouput = sequence_output.mean(dim=1)
-            output = torch.cat((max_output, avg_ouput), dim=1)
-        else :
-            output = sequence_output[:, 0, :]
+            if padding_mask is not None:
+                valid_mask = (~padding_mask).float().unsqueeze(-1) # unsqueeze: (B, L) -> (B, L, 1)
+                                                                    # (B, L, D) 크기의 텐서와 (B, L) 크기의 마스크를 바로 곱할 수 없기 때문.
+                # Mean & Max pooling
+                sum_embeddings = torch.sum(sequence_output * valid_mask, dim=1)
+                sum_mask = torch.sum(valid_mask, dim=1).clamp(min=1) # trust data - that all tokens are valid tokens
+                
+                avg_output = sum_embeddings / sum_mask # mean_pool
+            
+                masked_sequence = sequence_output.masked_fill(padding_mask.unsqueeze(-1), -1e9)
+                max_output = masked_sequence.max(dim=1).values # max_pool # (B, L, D)에서 L 방향으로 최댓값만 추출
+                output = torch.cat((max_output, avg_output), dim=1) # (B, 2D)에서 D 방향으로 연결
+            else:
+                output = torch.cat((sequence_output.max(dim=1).values, sequence_output.mean(dim=1)), dim=1)
+                
+        else: # cls 모드
+            if self.is_mamba and not self.mamba_bidirectional:
+                # For uni mamba
+                if padding_mask is not None:
+                    last_indices = (~padding_mask).sum(dim=1).long() - 1
+                    last_indices = last_indices.clamp(min=0)
+                    output = sequence_output[torch.arange(sequence_output.size(0)), last_indices]
+                else:
+                    output = sequence_output[:, -1, :] # 마스크 없으면 맨 뒤
+            else:
+                output = sequence_output[:, 0, :] # Transformer나 양방향 Mamba는 첫 번째 토큰 사용 (이들은 TOV의 forward에 mask를 보내지 않게 설계)
         
         x = self.dense(output)
         x = self.gelu(x)
@@ -143,6 +184,10 @@ class PretrainedModel(nn.Module) :
         padding_mask = self.create_padding_mask(input_ids)
         encoder_output = self.transformer(x, mask=padding_mask)
 
+        # 추가: Mamba와 마찬가지로 출력값에서 PAD 위치들은 loss 계산안되도록 각 task 입력 전 처리 (패딩 위치 0으로)
+        valid_mask = (~padding_mask).float().unsqueeze(-1)
+        encoder_output = encoder_output * valid_mask
+
         outputs = {}
 
         # Task 1: MTP
@@ -155,7 +200,7 @@ class PretrainedModel(nn.Module) :
             
         # Task 3: TOV
         if task_type == 'TOV' or task_type == 'ALL':
-            outputs['tov_logits'] = self.tov_head(encoder_output)
+            outputs['tov_logits'] = self.tov_head(encoder_output, padding_mask=padding_mask)
 
         # 단일 태스크를 요구했을 경우 dict 대신 로짓 텐서 자체를 반환
         if len(outputs) == 1 and task_type != 'ALL':
@@ -163,6 +208,105 @@ class PretrainedModel(nn.Module) :
             
         return outputs
 
+class MambaBackbone(nn.Module) :
+    def __init__(
+        self,
+        d_model,
+        num_layers,
+        vocab_size,
+        mamba_bidirectional=False,
+        dropout : float = 0.1,
+        d_intermediate : int = 0 # MLP intermediate dim; 0 = no MLP #TODO : check this
+    ):
+        super().__init__()
+        self.mamba_bidirectional = mamba_bidirectional
+
+        # 정방향
+        self.fwd_mamba = MixerModel(
+            d_model=d_model,
+            n_layer=num_layers,
+            vocab_size=vocab_size,
+            rms_norm=True,
+            fused_add_norm=True,
+            d_intermediate=d_intermediate  
+        )
+        
+        if self.mamba_bidirectional :
+            self.bwd_mamba = MixerModel(
+                d_model=d_model,
+                n_layer=num_layers,
+                vocab_size=vocab_size,
+                rms_norm=True,
+                fused_add_norm=True,
+                d_intermediate=d_intermediate
+            )
+            self.projection = nn.Linear(d_model * 2, vocab_size) # 결합 후 원래 차원으로 projection (결합을 concat으로 하면 dimension이 2배가 되므로)
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, input_ids) :
+        # forward
+        fwd_out = self.fwd_mamba(input_ids) # (B, L, D)
+        if self.mamba_bidirectional :
+            bwd_out = self.bwd_mamba(input_ids.flip(dims=-1)).flip(dims=-1)
+            out = torch.cat((fwd_out, bwd_out), dim=-1)
+            out = self.projection(out)
+            return out
+        else :
+            return fwd_out
+            
+
+class PretrainMamba(nn.Module) : # best practice based on paper # wrapper class
+    def __init__(
+        self,
+        vocab_size, 
+        d_model, 
+        num_layers,
+        dropout=0.1, 
+        padding_idx=0, 
+        tov_norm='cls',
+        mamba_bidirectional=False):
+
+        super().__init__()
+
+        self.d_model = d_model
+        self.num_layers = num_layers
+        self.padding_idx = padding_idx
+
+        self.model = MambaBackbone( # already contains embedding layer
+            d_model=d_model,
+            num_layers=num_layers,
+            vocab_size=vocab_size,
+            mamba_bidirectional=mamba_bidirectional,
+            dropout=dropout
+        )
+
+        self.mtp_head = MTPHead(d_model, vocab_size)
+        self.tpp_head = TPPHead(d_model, vocab_size)
+        self.tov_head = TOVHead(d_model, num_classes=2, dropout=dropout, tov_norm=tov_norm, is_mamba=True, mamba_bidirectional=mamba_bidirectional)
+
+    def create_padding_mask(self, input_ids):
+        return (input_ids == self.padding_idx)
+
+    def forward(self, input_ids, task_type="ALL") :
+        encoder_output = self.model(input_ids) # (B, L, D)
+        padding_mask = self.create_padding_mask(input_ids) # (B, L)
+        valid_mask = (~padding_mask).float().unsqueeze(-1)
+        encoder_output = encoder_output * valid_mask
+
+        outputs = {}
+
+        if task_type == 'MTP' or task_type == 'ALL':
+            outputs['mtp_logits'] = self.mtp_head(encoder_output)
+        if task_type == 'TPP' or task_type == 'ALL':
+            outputs['ttp_logits'] = self.tpp_head(encoder_output)
+        if task_type == 'TOV' or task_type == 'ALL':
+            outputs['tov_logits'] = self.tov_head(encoder_output, padding_mask=padding_mask)
+
+        if len(outputs) == 1 and task_type != 'ALL':
+            return list(outputs.values())[0]
+
+        return outputs
 
 class FinetuningHead(nn.Module) :
     def __init__(self, input_dim, d_model, dropout) :
@@ -253,6 +397,9 @@ class FineTuningModel(nn.Module):
             t_mask = self.create_padding_mask(input_ids_t)
             t_out = self.transformer_encoder_t(t_x, mask=t_mask)
 
+            # TODO: # forward 내부의 Pooling 부분 수정
+            # Padding에 대해... # Masked처리된  Mean/Max Pooling (TOVHead 로직과 동일하게 적용해야 함)
+            
             if self.clf_norm == 'pool':
                 # Max pool + Mean pool (d_model * 2)
                 t_feat = torch.cat([t_out.max(dim=1).values, t_out.mean(dim=1)], dim=1)
