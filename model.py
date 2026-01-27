@@ -299,7 +299,7 @@ class PretrainMamba(nn.Module) : # best practice based on paper # wrapper class
         if task_type == 'MTP' or task_type == 'ALL':
             outputs['mtp_logits'] = self.mtp_head(encoder_output)
         if task_type == 'TPP' or task_type == 'ALL':
-            outputs['ttp_logits'] = self.tpp_head(encoder_output)
+            outputs['tpp_logits'] = self.tpp_head(encoder_output)
         if task_type == 'TOV' or task_type == 'ALL':
             outputs['tov_logits'] = self.tov_head(encoder_output, padding_mask=padding_mask)
 

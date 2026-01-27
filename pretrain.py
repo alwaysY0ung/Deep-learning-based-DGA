@@ -275,17 +275,17 @@ def train_subword(cfg, args) :
 
     if args.type == "transformer" :
         model = PretrainedModel(
-            vocab_size=cfg.vocab_size_char,
+            vocab_size=cfg.vocab_size_subword,
             d_model=cfg.d_model,
             n_heads=cfg.nhead,
             dim_feedforward=cfg.dim_feedforward,
             num_layers=cfg.num_layers,
-            max_len=cfg.max_len_char,
+            max_len=cfg.max_len_subword,
             tov_norm=cfg.tov_norm,
         ).to(device)
     elif args.type == "mamba" :
         model = PretrainMamba(
-            vocab_size=cfg.vocab_size_char,
+            vocab_size=cfg.vocab_size_subword,
             d_model=cfg.d_model,
             num_layers=cfg.num_layers,
             dropout=cfg.dropout,
