@@ -23,6 +23,7 @@ class PretrainConfig:
     vocab_size_subword: int = 32393
     min_freq_subword: int = 2
     use_bert_pretokenizer: bool = False
+    padding_idx: int = 0
     
     # Model
     d_model: int = 256
@@ -30,6 +31,11 @@ class PretrainConfig:
     num_layers: int = 12
     dim_feedforward: int = 768
     dropout: float = 0.1
+    # Model - only for Mamba (not used since we implement mamba by using 'MixerModel' from mixer_seq_simple.py, not mamba single block from 'mamba_simple.py')
+    # d_state: int = 16
+    # d_conv: int = 4
+    # d_expand: int = 2
+    mamba_bidirectional: bool = False
     
     # Training
     batch_size: int = 128
