@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from preprocessing import SubTaskDataset, SpecialIDs
 from transformers import AutoTokenizer
 from transformers import PreTrainedTokenizerFast
-from model import PretrainedModel
+from model import PretrainedModel, PretrainMamba
 from tqdm import tqdm
 import datetime
 import wandb
@@ -81,15 +81,26 @@ def train_char(cfg, args) :
         pin_memory=True,
     )
 
-    model = PretrainedModel(
-        vocab_size=cfg.vocab_size_char,
-        d_model=cfg.d_model,
-        n_heads=cfg.nhead,
-        dim_feedforward=cfg.dim_feedforward,
-        num_layers=cfg.num_layers,
-        max_len=cfg.max_len_char,
-        tov_norm=cfg.tov_norm,
-    ).to(device)
+    if args.type == "transformer" :
+        model = PretrainedModel(
+            vocab_size=cfg.vocab_size_char,
+            d_model=cfg.d_model,
+            n_heads=cfg.nhead,
+            dim_feedforward=cfg.dim_feedforward,
+            num_layers=cfg.num_layers,
+            max_len=cfg.max_len_char,
+            tov_norm=cfg.tov_norm,
+        ).to(device)
+    elif args.type == "mamba" :
+        model = PretrainMamba(
+            vocab_size=cfg.vocab_size_char,
+            d_model=cfg.d_model,
+            num_layers=cfg.num_layers,
+            dropout=cfg.dropout,
+            padding_idx=cfg.padding_idx,
+            mamba_bidirectional=cfg.mamba_bidirectional,
+            tov_norm=cfg.tov_norm,
+        ).to(device)
 
     ce = nn.CrossEntropyLoss(ignore_index=cfg.ignore_index)
     bce = nn.CrossEntropyLoss()
@@ -262,15 +273,26 @@ def train_subword(cfg, args) :
         pin_memory=True,
     )
 
-    model = PretrainedModel(
-        vocab_size=tokenizer.vocab_size,
-        d_model=cfg.d_model,
-        n_heads=cfg.nhead,
-        dim_feedforward=cfg.dim_feedforward,
-        num_layers=cfg.num_layers,
-        max_len=cfg.max_len_subword,
-        tov_norm=cfg.tov_norm,
-    ).to(device)
+    if args.type == "transformer" :
+        model = PretrainedModel(
+            vocab_size=cfg.vocab_size_char,
+            d_model=cfg.d_model,
+            n_heads=cfg.nhead,
+            dim_feedforward=cfg.dim_feedforward,
+            num_layers=cfg.num_layers,
+            max_len=cfg.max_len_char,
+            tov_norm=cfg.tov_norm,
+        ).to(device)
+    elif args.type == "mamba" :
+        model = PretrainMamba(
+            vocab_size=cfg.vocab_size_char,
+            d_model=cfg.d_model,
+            num_layers=cfg.num_layers,
+            dropout=cfg.dropout,
+            padding_idx=cfg.padding_idx,
+            mamba_bidirectional=cfg.mamba_bidirectional,
+            tov_norm=cfg.tov_norm,
+        ).to(device)
 
     ce = nn.CrossEntropyLoss(ignore_index=cfg.ignore_index)
     bce = nn.CrossEntropyLoss()
@@ -456,6 +478,8 @@ def main() :
    cfg = PretrainConfig()
    parser.add_argument("--mode", choices=["char", "subword"], required=True,
                         help="Pre-training mode: char or subword")
+   parser.add_argument("--type", choices=["transformer", "mamba"], required=True,
+                        help="Pre-training type: transformer or mamba")
    parser.add_argument("--save", type=str, default="pretrained.pt", help="Path to save model state dict")
    parser.add_argument("--total_steps", type=int, default=10000000, help="Total training steps")
    parser.add_argument("--val_check_interval", type=int, default=20000, help="Steps between validation")
