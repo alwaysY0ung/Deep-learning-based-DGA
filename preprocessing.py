@@ -97,7 +97,7 @@ def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5, max_special_id=4
 
 class SubTaskDataset(Dataset) :
     def __init__(self, df, domain_col='domain', label_col='label', max_len=77, mask_ratio=0.15, ignore_idx=-100, shuffle_prob = 0.5,
-                tokenizer=None, special_ids=SpecialIDs, type='char'):
+                tokenizer=None, special_ids=SpecialIDs, type='char') -> np.ndarray:
         self.df = df
         self.domain_col = domain_col
         self.label_col = label_col
