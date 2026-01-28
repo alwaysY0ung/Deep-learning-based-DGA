@@ -46,8 +46,8 @@ def train_char(cfg, args) :
     print(f"Loaded Tokenizer Vocab Size: {tokenizer.vocab_size}")
     assert tokenizer.vocab_size == cfg.vocab_size_subword, "Tokenizer vocab size does not match!"
 
-    train_df, _ = get_train_set_tld()
-    val_df = get_val_set_tld()
+    train_df, _ = get_train_set_tld() # .sample(frac=0.01) for debugging
+    val_df = get_val_set_tld() # .sample(frac=0.01) for debugging
 
     train_dataset = SubTaskDataset(
         train_df,
@@ -98,7 +98,7 @@ def train_char(cfg, args) :
             num_layers=cfg.num_layers,
             dropout=cfg.dropout,
             padding_idx=cfg.padding_idx,
-            mamba_bidirectional=cfg.mamba_bidirectional,
+            mamba_bidirectional=args.bidirectional,
             tov_norm=cfg.tov_norm,
         ).to(device)
 
@@ -290,7 +290,7 @@ def train_subword(cfg, args) :
             num_layers=cfg.num_layers,
             dropout=cfg.dropout,
             padding_idx=cfg.padding_idx,
-            mamba_bidirectional=cfg.mamba_bidirectional,
+            mamba_bidirectional=args.bidirectional,
             tov_norm=cfg.tov_norm,
         ).to(device)
 
@@ -474,37 +474,60 @@ def validate(model, dataloader, device, cfg, args):
 
 
 def main() :
-   parser = argparse.ArgumentParser()
-   cfg = PretrainConfig()
-   parser.add_argument("--mode", choices=["char", "subword"], required=True,
+    parser = argparse.ArgumentParser()
+    cfg = PretrainConfig()
+    parser.add_argument("--mode", choices=["char", "subword"], required=True,
                         help="Pre-training mode: char or subword")
-   parser.add_argument("--type", choices=["transformer", "mamba"], required=True,
+    parser.add_argument("--type", choices=["transformer", "mamba"], required=True,
                         help="Pre-training type: transformer or mamba")
-   parser.add_argument("--save", type=str, default="pretrained.pt", help="Path to save model state dict")
-   parser.add_argument("--total_steps", type=int, default=10000000, help="Total training steps")
-   parser.add_argument("--val_check_interval", type=int, default=20000, help="Steps between validation")
-   parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging")
-   parser.add_argument("--log_interval", type=int, default=1000, help="Steps between logging")
-   parser.add_argument("--project_name", type=str, default="dga-pretrain", help="Wandb project name")
-   parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")
-   parser.add_argument("--tov_norm", type=str, choices=["cls", "pool"], default="cls", help="TOV pooling strategy")
-   parser.add_argument("--tokenizer_min_freq", type=int, default=cfg.min_freq_subword, help="Tokenizer min frequency")
-   parser.add_argument("--tokenizer_vocab_size", type=int, default=cfg.vocab_size_subword, help="Tokenizer vocab size")
+    parser.add_argument("--bidirectional", default=False, type=bool, help="Use bidirectional mamba if True")
+    parser.add_argument("--save", type=str, default="pretrained.pt", help="Path to save model state dict")
+    parser.add_argument("--total_steps", type=int, default=10000000, help="Total training steps")
+    parser.add_argument("--val_check_interval", type=int, default=20000, help="Steps between validation")
+    parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging")
+    parser.add_argument("--log_interval", type=int, default=1000, help="Steps between logging")
+    parser.add_argument("--project_name", type=str, default="dga-pretrain", help="Wandb project name")
+    parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")
+    parser.add_argument("--tov_norm", type=str, choices=["cls", "pool"], default="cls", help="TOV pooling strategy")
+    parser.add_argument("--tokenizer_min_freq", type=int, default=cfg.min_freq_subword, help="Tokenizer min frequency")
+    parser.add_argument("--tokenizer_vocab_size", type=int, default=cfg.vocab_size_subword, help="Tokenizer vocab size")
 
-   args = parser.parse_args()
-   args.use_wandb = not args.no_wandb
+    args = parser.parse_args()
+    args.use_wandb = not args.no_wandb
 
-   cfg = PretrainConfig(
+    cfg = PretrainConfig(
         save_path=args.save, 
         tov_norm=args.tov_norm,
         min_freq_subword=args.tokenizer_min_freq,
         vocab_size_subword=args.tokenizer_vocab_size
     )
 
-   if args.mode == "char" :
-       train_char(cfg, args)
-   elif args.mode == "subword" :
-       train_subword(cfg, args)
+    if args.type == "transformer" and args.bidirectional :
+        raise ValueError(f"{'-' * 20}\nBidirectional is not supported for transformer.\n \
+            There's only three case for model type: transformer, mamba, mamba-bidirectional.\n{'-' * 20}")
+
+    print(f"--mode: {args.mode}")
+    print(f"--bidirectional: {args.bidirectional}")
+    print(f"--save: {args.save}")
+    print(f"--total_steps: {args.total_steps}")
+    print(f"--val_check_interval: {args.val_check_interval}")
+    print(f"--no_wandb: {args.no_wandb}")
+    print(f"--log_interval: {args.log_interval}")
+    print(f"--project_name: {args.project_name}")
+    print(f"--run_name: {args.run_name}")
+    print(f"--tov_norm: {args.tov_norm}")
+    print(f"--tokenizer_min_freq: {args.tokenizer_min_freq}")
+    print(f"--tokenizer_vocab_size: {args.tokenizer_vocab_size}")
+
+    print(f"--save_path: {cfg.save_path}")
+    print(f"--tov_norm: {cfg.tov_norm}")
+    print(f"--min_freq_subword: {cfg.min_freq_subword}")
+    print(f"--vocab_size_subword: {cfg.vocab_size_subword}")
+
+    if args.mode == "char" :
+        train_char(cfg, args)
+    elif args.mode == "subword" :
+        train_subword(cfg, args)
 
 if __name__ == '__main__':
     main()
