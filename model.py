@@ -143,11 +143,19 @@ class TOVHead(nn.Module):
                 if padding_mask is not None:
                     last_indices = (~padding_mask).sum(dim=1).long() - 1
                     last_indices = last_indices.clamp(min=0)
+                    output = sequence_output[torch.arange(sequence_output.size(0)), last_indices] # 각 배치 b에서, last_indices[b] 위치의 D차원 벡터를 하나씩 가져온다 = (B, D)
+                else:
+                    output = sequence_output[:, -1, :] # 마스크 없으면 맨 뒤
+            elif self.is_mamba and self.mamba_bidirectional:
+                # For bi mamba
+                if padding_mask is not None:
+                    last_indices = (~padding_mask).sum(dim=1).long() - 1
+                    last_indices = last_indices.clamp(min=0)
                     output = sequence_output[torch.arange(sequence_output.size(0)), last_indices]
                 else:
                     output = sequence_output[:, -1, :] # 마스크 없으면 맨 뒤
             else:
-                output = sequence_output[:, 0, :] # Transformer나 양방향 Mamba는 첫 번째 토큰 사용 (이들은 TOV의 forward에 mask를 보내지 않게 설계)
+                output = sequence_output[:, 0, :] # Transformer는 첫 번째 토큰 사용
         
         x = self.dense(output)
         x = self.gelu(x)
@@ -222,7 +230,7 @@ class MambaBackbone(nn.Module) :
         self.mamba_bidirectional = mamba_bidirectional
 
         # 정방향
-        self.fwd_mamba = MixerModel(
+        self.fwd_mamba = MixerModel( # already contains embedding layer
             d_model=d_model,
             n_layer=num_layers,
             vocab_size=vocab_size,
@@ -240,19 +248,20 @@ class MambaBackbone(nn.Module) :
                 fused_add_norm=True,
                 d_intermediate=d_intermediate
             )
-            self.projection = nn.Linear(d_model * 2, vocab_size) # 결합 후 원래 차원으로 projection (결합을 concat으로 하면 dimension이 2배가 되므로)
+            self.projection = nn.Linear(d_model * 2, d_model) # 결합 후 원래 차원으로 projection (결합을 concat으로 하면 dimension이 2배가 되므로)
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, input_ids) :
+    def forward(self, input_ids, padding_mask) :
         # forward
-        fwd_out = self.fwd_mamba(input_ids) # (B, L, D)
-        if self.mamba_bidirectional :
-            bwd_out = self.bwd_mamba(input_ids.flip(dims=-1)).flip(dims=-1)
-            out = torch.cat((fwd_out, bwd_out), dim=-1)
+        fwd_out = self.fwd_mamba(input_ids) # (B, L, V) -> (B, L, D)
+        if self.mamba_bidirectional : # bi mamba
+            rev_ids = input_ids.flip(dims=[1]) # L 방향으로 뒤집음, 즉 a,b,c -> c,b,a
+            bwd_out = self.bwd_mamba(rev_ids).flip(dims=[1]) # (B, L, D) -> (B, L, D) : (L 방향으로 뒤집음, 즉 c,b,a -> a,b,c)
+            out = torch.cat((fwd_out, bwd_out), dim=-1) # (B, L, 2D) -> (B, L, D)
             out = self.projection(out)
             return out
-        else :
+        else : # uni mamba
             return fwd_out
             
 
@@ -273,7 +282,7 @@ class PretrainMamba(nn.Module) : # best practice based on paper # wrapper class
         self.num_layers = num_layers
         self.padding_idx = padding_idx
 
-        self.model = MambaBackbone( # already contains embedding layer
+        self.model = MambaBackbone(
             d_model=d_model,
             num_layers=num_layers,
             vocab_size=vocab_size,
@@ -289,8 +298,8 @@ class PretrainMamba(nn.Module) : # best practice based on paper # wrapper class
         return (input_ids == self.padding_idx)
 
     def forward(self, input_ids, task_type="ALL") :
-        encoder_output = self.model(input_ids) # (B, L, D)
-        padding_mask = self.create_padding_mask(input_ids) # (B, L)
+        padding_mask = self.create_padding_mask(input_ids) # # (B, L, D) -> (B, L)
+        encoder_output = self.model(input_ids, padding_mask=padding_mask)
         valid_mask = (~padding_mask).float().unsqueeze(-1)
         encoder_output = encoder_output * valid_mask
 
