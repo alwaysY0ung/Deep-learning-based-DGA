@@ -5,6 +5,25 @@
 **DRIFT** is a specialized deep learning framework designed to solve the problem of **concept drift** in Domain Generation Algorithm (DGA) detection. While traditional detectors perform well in static environments, their accuracy often degrades over time as attackers evolve their generation logic. This project introduces a **dual-branch Transformer** architecture that learns invariant structural features to ensure long-term dependability in evolving threat landscapes.
 
 ---
+## 0. Environment
+* We prepared the environment using Miniforge.
+* We also investigate [Mamba-SSM](https://github.com/state-spaces/mamba) as an extension of this work ([#8](../../issues/8)).
+```bash
+# clean한 conda 환경 준비하기
+mamba create -n dga_stable
+mamba activate dga_stable
+# clean한 상태에서 아래 커맨드 실행
+mamba install -y python=3.14 pip cuda-nvcc=13.0 
+pip install pandas pyarrow numpy scipy matplotlib ipython scikit-learn pillow jupyter openpyxl tqdm seaborn tabulate scienceplots wandb transformers polars tokenizers cantools pyarrow torchinfo torch'>=2.9.1' torchvision torchaudio mamba-ssm --extra-index-url https://download.pytorch.org/whl/cu130
+```
+
+### usage
+```bash
+python pretrain.py --mode=char --type=mamba --run_name=char-cls-2273-83-pinTLD-uniMamba # char backbone using uni-mamba
+python pretrain.py --mode=char --type=mamba --bidirectional=True --run_name=char-cls-2273-83-pinTLD-biMamba # char backbone using bi-mamba
+```
+
+---
 
 ## 1. Key Components
 
