@@ -94,6 +94,7 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
         for batch in train_loop :
             global_step += 1
 
+            # unfreeze backbone at unfreeze_step
             if freeze_backbone and not backbone_unfrozen and global_step >= unfreeze_step:
                 ft_model.set_backbone_freezing(freeze=False) # 모든 파라미터 해제
                 backbone_unfrozen = True
