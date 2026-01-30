@@ -25,12 +25,28 @@ def log_artifact(run, path, name, type_="model"):
         run.log_artifact(artifact)
 
 
+def save_checkpoint(model, optimizer, global_step, best_loss, 
+                    interval_loss_sum_total, interval_loss_sum_mtp, interval_loss_sum_tpp, interval_loss_sum_tov, save_path) :
+    torch.save({
+        'global_step': global_step,
+        'best_loss': best_loss,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'interval_loss_sum_total': interval_loss_sum_total,
+        'interval_loss_sum_mtp': interval_loss_sum_mtp,
+        'interval_loss_sum_tpp': interval_loss_sum_tpp,
+        'interval_loss_sum_tov': interval_loss_sum_tov,
+    }, save_path)
+
+
 def train_char(cfg, args) :
     now_date = datetime.datetime.now().strftime('%m%d_%H%M')
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     run = None
     if args.use_wandb:
+        if args.run_id is not None :
+            run = wandb.init(project=args.project_name, id=args.run_id, resume='allow')
         run = wandb.init(project=args.project_name, name=args.run_name, config=vars(cfg), tags=['valid'])
 
     tokenizer_path = path_tokenizer.joinpath((f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both-tld.json"))
@@ -106,17 +122,27 @@ def train_char(cfg, args) :
     bce = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=cfg.lr)
 
-    model.train()
-
-    best_loss = float('inf')
-    global_step = 0
-    
-    interval_loss_sum_total = 0 
-    interval_loss_sum_mtp = 0
-    interval_loss_sum_tpp = 0
-    interval_loss_sum_tov = 0
-
     train_loop = tqdm(total=args.total_steps, desc="[Train]", bar_format='{l_bar}{r_bar}')
+    best_loss = float('inf')
+
+    if args.checkpoint_path is not None :
+        checkpoint = torch.load(path_model.joinpath(args.checkpoint_path))
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        global_step = checkpoint['global_step']
+        interval_loss_sum_total = checkpoint['interval_loss_sum_total']
+        interval_loss_sum_mtp = checkpoint['interval_loss_sum_mtp']
+        interval_loss_sum_tpp = checkpoint['interval_loss_sum_tpp']
+        interval_loss_sum_tov = checkpoint['interval_loss_sum_tov']
+        train_loop.update(global_step)
+    else :
+        global_step = 0
+        interval_loss_sum_total = 0 
+        interval_loss_sum_mtp = 0
+        interval_loss_sum_tpp = 0
+        interval_loss_sum_tov = 0
+
+    model.train()
 
     while global_step < args.total_steps :
 
@@ -124,95 +150,103 @@ def train_char(cfg, args) :
         total_tpp_loss = 0
         total_tov_loss = 0
 
-        for X_mtp, Y_mtp, X_tpp, Y_tpp, X_tov, Y_tov in train_dataloader :
-            if global_step >= args.total_steps :
-                break
+        try:
+            for X_mtp, Y_mtp, X_tpp, Y_tpp, X_tov, Y_tov in train_dataloader :
+                if global_step >= args.total_steps :
+                    break
 
-            X_mtp, Y_mtp = X_mtp.to(device), Y_mtp.to(device)
-            X_tpp, Y_tpp = X_tpp.to(device), Y_tpp.to(device)
-            X_tov, Y_tov = X_tov.to(device), Y_tov.to(device)
+                X_mtp, Y_mtp = X_mtp.to(device), Y_mtp.to(device)
+                X_tpp, Y_tpp = X_tpp.to(device), Y_tpp.to(device)
+                X_tov, Y_tov = X_tov.to(device), Y_tov.to(device)
 
-            # --- T1: MTP Loss 계산 ---
-            logits_mtp = model(X_mtp, task_type='MTP')
-            loss_mtp = ce(
-                logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
-                Y_mtp.view(-1)                            # (B*L)
-            )
+                # --- T1: MTP Loss 계산 ---
+                logits_mtp = model(X_mtp, task_type='MTP')
+                loss_mtp = ce(
+                    logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
+                    Y_mtp.view(-1)                            # (B*L)
+                )
 
-            # --- T2: TPP Loss 계산 ---
-            logits_tpp = model(X_tpp, task_type='TPP')
-            loss_tpp = ce(
-                logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
-                Y_tpp.view(-1)                             # (B*L)
-            )
+                # --- T2: TPP Loss 계산 ---
+                logits_tpp = model(X_tpp, task_type='TPP')
+                loss_tpp = ce(
+                    logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
+                    Y_tpp.view(-1)                             # (B*L)
+                )
 
-            # --- T3: TOV Loss 계산 ---
-            logits_tov = model(X_tov, task_type='TOV')
-            loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
+                # --- T3: TOV Loss 계산 ---
+                logits_tov = model(X_tov, task_type='TOV')
+                loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
 
-            L_total = loss_mtp + loss_tpp + loss_tov
+                L_total = loss_mtp + loss_tpp + loss_tov
 
-            optimizer.zero_grad()
-            L_total.backward()
-            optimizer.step()
+                optimizer.zero_grad()
+                L_total.backward()
+                optimizer.step()
 
-            global_step += 1
-            train_loop.update(1)
+                total_mtp_loss += loss_mtp.item()
+                total_tpp_loss += loss_tpp.item()
+                total_tov_loss += loss_tov.item()
 
-            total_mtp_loss += loss_mtp.item()
-            total_tpp_loss += loss_tpp.item()
-            total_tov_loss += loss_tov.item()
+                interval_loss_sum_total += L_total.item()
+                interval_loss_sum_mtp += loss_mtp.item()
+                interval_loss_sum_tpp += loss_tpp.item()
+                interval_loss_sum_tov += loss_tov.item()
 
-            interval_loss_sum_total += L_total.item()
-            interval_loss_sum_mtp += loss_mtp.item()
-            interval_loss_sum_tpp += loss_tpp.item()
-            interval_loss_sum_tov += loss_tov.item()
-            
-            # 인터벌 로깅
-            if global_step % args.log_interval == 0:
-                avg_total_interval = interval_loss_sum_total / args.log_interval
-                avg_mtp_interval = interval_loss_sum_mtp / args.log_interval
-                avg_tpp_interval = interval_loss_sum_tpp / args.log_interval
-                avg_tov_interval = interval_loss_sum_tov / args.log_interval
+                train_loop.update(1)
+                global_step += 1
                 
-                if args.use_wandb:
-                    wandb.log({
-                        "step/interval_total_loss": avg_total_interval,
-                        "step/interval_mtp_loss": avg_mtp_interval,
-                        "step/interval_tpp_loss": avg_tpp_interval,
-                        "step/interval_tov_loss": avg_tov_interval,
-                    })
-
-                train_loop.write(f"[Step {global_step} Interval Log]: Train Loss: {avg_total_interval:.4f}")
-
-                interval_loss_sum_total = 0 
-                interval_loss_sum_mtp = 0
-                interval_loss_sum_tpp = 0
-                interval_loss_sum_tov = 0
-
-            if global_step % args.val_check_interval == 0:
-                val_loss = validate(model, val_dataloader, device, cfg, args)
-                train_loop.write(f"[char] step {global_step} val_loss={val_loss:.4f}")
-
-                if val_loss < best_loss:
-                    best_loss = val_loss
-                    save_path = path_model.joinpath(f"{now_date}_{cfg.save_path.replace('.pt', '')}_step_{global_step}.pt")
-                    torch.save(model.state_dict(), save_path)
+                # 인터벌 로깅
+                if global_step % args.log_interval == 0:
+                    avg_total_interval = interval_loss_sum_total / args.log_interval
+                    avg_mtp_interval = interval_loss_sum_mtp / args.log_interval
+                    avg_tpp_interval = interval_loss_sum_tpp / args.log_interval
+                    avg_tov_interval = interval_loss_sum_tov / args.log_interval
+                    
                     if args.use_wandb:
-                        pass
-                        # log_artifact(run, save_path, f"{args.mode}_{now_date}") # wandb artifact 저장 필요 시
+                        wandb.log({
+                            "step/interval_total_loss": avg_total_interval,
+                            "step/interval_mtp_loss": avg_mtp_interval,
+                            "step/interval_tpp_loss": avg_tpp_interval,
+                            "step/interval_tov_loss": avg_tov_interval,
+                        }, step=global_step//args.log_interval -1)
 
-            current_step = train_loop.n + 1
-            with torch.no_grad() :
-                avg_mtp = total_mtp_loss / current_step
-                avg_tpp = total_tpp_loss / current_step
-                avg_tov = total_tov_loss / current_step
-                avg_total = (total_mtp_loss + total_tpp_loss + total_tov_loss) / current_step
+                    train_loop.write(f"[Step {global_step} Interval Log]: Train Loss: {avg_total_interval:.4f}")
 
-            train_loop.set_postfix(dict(avg_total=f'{avg_total:.4f}',
-                                    avg_mtp=f'{avg_mtp:.4f}',
-                                    avg_tpp=f'{avg_tpp:.4f}',
-                                    avg_tov=f'{avg_tov:.4f}'), refresh=False)
+                    interval_loss_sum_total = 0 
+                    interval_loss_sum_mtp = 0
+                    interval_loss_sum_tpp = 0
+                    interval_loss_sum_tov = 0
+
+                if global_step % args.val_check_interval == 0:
+                    val_loss = validate(model, val_dataloader, device, global_step, cfg, args)
+                    train_loop.write(f"[char] step {global_step} val_loss={val_loss:.4f}")
+
+                    if val_loss < best_loss:
+                        best_loss = val_loss
+                        save_path = path_model.joinpath(f"{now_date}_{cfg.save_path.replace('.pt', '')}_step_{global_step}.pt")
+                        torch.save(model.state_dict(), save_path)
+                        if args.use_wandb:
+                            pass
+                            # log_artifact(run, save_path, f"{args.mode}_{now_date}") # wandb artifact 저장 필요 시
+
+                current_step = train_loop.n
+                with torch.no_grad() :
+                    avg_mtp = total_mtp_loss / current_step
+                    avg_tpp = total_tpp_loss / current_step
+                    avg_tov = total_tov_loss / current_step
+                    avg_total = (total_mtp_loss + total_tpp_loss + total_tov_loss) / current_step
+
+                train_loop.set_postfix(dict(avg_total=f'{avg_total:.4f}',
+                                        avg_mtp=f'{avg_mtp:.4f}',
+                                        avg_tpp=f'{avg_tpp:.4f}',
+                                        avg_tov=f'{avg_tov:.4f}'), refresh=False)
+        except (KeyboardInterrupt, Exception) as e:
+            print(f"\n{type(e).__name__} — saving checkpoint")
+            save_path = path_model.joinpath(f"checkpoint-{global_step}.pt")
+            save_checkpoint(model, optimizer, global_step, best_loss, interval_loss_sum_total, interval_loss_sum_mtp, interval_loss_sum_tpp, interval_loss_sum_tov, save_path)
+            print(f"\nmodel save at {global_step}")
+            break
+
     if args.use_wandb :
         wandb.finish()
 
@@ -223,6 +257,8 @@ def train_subword(cfg, args) :
 
     run = None
     if args.use_wandb:
+        if args.run_id is not None :
+            run = wandb.init(project=args.project_name, id=args.run_id, resume='allow')
         run = wandb.init(project=args.project_name, name=args.run_name, config=vars(cfg), tags=['valid'])
 
     tokenizer_path = path_tokenizer.joinpath((f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both-tld.json"))
@@ -298,17 +334,27 @@ def train_subword(cfg, args) :
     bce = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=cfg.lr)
 
-    model.train()
-
-    best_loss = float('inf')
-    global_step = 0
-    
-    interval_loss_sum_total = 0 
-    interval_loss_sum_mtp = 0
-    interval_loss_sum_tpp = 0
-    interval_loss_sum_tov = 0
-
     train_loop = tqdm(total=args.total_steps, desc="[Train]", bar_format='{l_bar}{r_bar}')
+    best_loss = float('inf')
+
+    if args.checkpoint_path is not None :
+        checkpoint = torch.load(path_model.joinpath(args.checkpoint_path))
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        global_step = checkpoint['global_step']
+        interval_loss_sum_total = checkpoint['interval_loss_sum_total']
+        interval_loss_sum_mtp = checkpoint['interval_loss_sum_mtp']
+        interval_loss_sum_tpp = checkpoint['interval_loss_sum_tpp']
+        interval_loss_sum_tov = checkpoint['interval_loss_sum_tov']
+        train_loop.update(global_step)
+    else :
+        global_step = 0
+        interval_loss_sum_total = 0 
+        interval_loss_sum_mtp = 0
+        interval_loss_sum_tpp = 0
+        interval_loss_sum_tov = 0
+
+    model.train()
 
     while global_step < args.total_steps :
 
@@ -316,100 +362,109 @@ def train_subword(cfg, args) :
         total_tpp_loss = 0
         total_tov_loss = 0
         
-        for X_mtp, Y_mtp, X_tpp, Y_tpp, X_tov, Y_tov in train_dataloader :
-            if global_step >= args.total_steps :
-                break
-
-            X_mtp, Y_mtp = X_mtp.to(device), Y_mtp.to(device)
-            X_tpp, Y_tpp = X_tpp.to(device), Y_tpp.to(device)
-            X_tov, Y_tov = X_tov.to(device), Y_tov.to(device)
-
-            # --- T1: MTP Loss 계산 ---
-            logits_mtp = model(X_mtp, task_type='MTP')
-            loss_mtp = ce(
-                logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
-                Y_mtp.view(-1)                            # (B*L)
-            )
-
-            # --- T2: TPP Loss 계산 ---
-            logits_tpp = model(X_tpp, task_type='TPP')
-            loss_tpp = ce(
-                logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
-                Y_tpp.view(-1)                             # (B*L)
-            )
-
-            # --- T3: TOV Loss 계산 ---
-            logits_tov = model(X_tov, task_type='TOV')
-            loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
-
-            L_total = loss_mtp + loss_tpp + loss_tov
-
-            optimizer.zero_grad()
-            L_total.backward()
-            optimizer.step()
-
-            global_step += 1
-            train_loop.update(1)
-
-            total_mtp_loss += loss_mtp.item()
-            total_tpp_loss += loss_tpp.item()
-            total_tov_loss += loss_tov.item()
-
-            interval_loss_sum_total += L_total.item()
-            interval_loss_sum_mtp += loss_mtp.item()
-            interval_loss_sum_tpp += loss_tpp.item()
-            interval_loss_sum_tov += loss_tov.item()
-            
-            # 인터벌 로깅
-            if global_step % args.log_interval == 0:
-                avg_total_interval = interval_loss_sum_total / args.log_interval
-                avg_mtp_interval = interval_loss_sum_mtp / args.log_interval
-                avg_tpp_interval = interval_loss_sum_tpp / args.log_interval
-                avg_tov_interval = interval_loss_sum_tov / args.log_interval
+        try:
+            for X_mtp, Y_mtp, X_tpp, Y_tpp, X_tov, Y_tov in train_dataloader :
                 
-                if args.use_wandb:
-                    wandb.log({
-                        "step/interval_total_loss": avg_total_interval,
-                        "step/interval_mtp_loss": avg_mtp_interval,
-                        "step/interval_tpp_loss": avg_tpp_interval,
-                        "step/interval_tov_loss": avg_tov_interval,
-                    })
+                if global_step >= args.total_steps :
+                    break
 
-                train_loop.write(f"[Step {global_step} Interval Log]: Train Loss: {avg_total_interval:.4f}")
+                X_mtp, Y_mtp = X_mtp.to(device), Y_mtp.to(device)
+                X_tpp, Y_tpp = X_tpp.to(device), Y_tpp.to(device)
+                X_tov, Y_tov = X_tov.to(device), Y_tov.to(device)
 
-                interval_loss_sum_total = 0 
-                interval_loss_sum_mtp = 0
-                interval_loss_sum_tpp = 0
-                interval_loss_sum_tov = 0
+                # --- T1: MTP Loss 계산 ---
+                logits_mtp = model(X_mtp, task_type='MTP')
+                loss_mtp = ce(
+                    logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
+                    Y_mtp.view(-1)                            # (B*L)
+                )
 
-            if global_step % args.val_check_interval == 0:
-                val_loss = validate(model, val_dataloader, device, cfg, args)
-                train_loop.write(f"[subword] step {global_step} val_loss={val_loss:.4f}")
+                # --- T2: TPP Loss 계산 ---
+                logits_tpp = model(X_tpp, task_type='TPP')
+                loss_tpp = ce(
+                    logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
+                    Y_tpp.view(-1)                             # (B*L)
+                )
 
-                if val_loss < best_loss:
-                    best_loss = val_loss
-                    save_path = path_model.joinpath(f"{now_date}_{cfg.save_path.replace('.pt', '')}_step_{global_step}.pt")
-                    torch.save(model.state_dict(), save_path)
+                # --- T3: TOV Loss 계산 ---
+                logits_tov = model(X_tov, task_type='TOV')
+                loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
+
+                L_total = loss_mtp + loss_tpp + loss_tov
+
+                optimizer.zero_grad()
+                L_total.backward()
+                optimizer.step()
+
+                total_mtp_loss += loss_mtp.item()
+                total_tpp_loss += loss_tpp.item()
+                total_tov_loss += loss_tov.item()
+
+                interval_loss_sum_total += L_total.item()
+                interval_loss_sum_mtp += loss_mtp.item()
+                interval_loss_sum_tpp += loss_tpp.item()
+                interval_loss_sum_tov += loss_tov.item()
+
+                train_loop.update(1)
+                global_step += 1
+                
+                # 인터벌 로깅
+                if global_step % args.log_interval == 0:
+                    avg_total_interval = interval_loss_sum_total / args.log_interval
+                    avg_mtp_interval = interval_loss_sum_mtp / args.log_interval
+                    avg_tpp_interval = interval_loss_sum_tpp / args.log_interval
+                    avg_tov_interval = interval_loss_sum_tov / args.log_interval
+                    
                     if args.use_wandb:
-                        pass
-                        # log_artifact(run, save_path, f"{args.mode}_{now_date}") # wandb artifact 저장 필요 시
+                        wandb.log({
+                            "step/interval_total_loss": avg_total_interval,
+                            "step/interval_mtp_loss": avg_mtp_interval,
+                            "step/interval_tpp_loss": avg_tpp_interval,
+                            "step/interval_tov_loss": avg_tov_interval,
+                        }, step=global_step//args.log_interval -1)
 
-            current_step = train_loop.n + 1
-            with torch.no_grad() :
-                avg_mtp = total_mtp_loss / current_step
-                avg_tpp = total_tpp_loss / current_step
-                avg_tov = total_tov_loss / current_step
-                avg_total = (total_mtp_loss + total_tpp_loss + total_tov_loss) / current_step
+                    train_loop.write(f"[Step {global_step} Interval Log]: Train Loss: {avg_total_interval:.4f}")
 
-            train_loop.set_postfix(dict(avg_total=f'{avg_total:.4f}',
-                                    avg_mtp=f'{avg_mtp:.4f}',
-                                    avg_tpp=f'{avg_tpp:.4f}',
-                                    avg_tov=f'{avg_tov:.4f}'), refresh=False)
+                    interval_loss_sum_total = 0 
+                    interval_loss_sum_mtp = 0
+                    interval_loss_sum_tpp = 0
+                    interval_loss_sum_tov = 0
+
+                if global_step % args.val_check_interval == 0:
+                    val_loss = validate(model, val_dataloader, device, global_step, cfg, args)
+                    train_loop.write(f"[subword] step {global_step} val_loss={val_loss:.4f}")
+
+                    if val_loss < best_loss:
+                        best_loss = val_loss
+                        save_path = path_model.joinpath(f"{now_date}_{cfg.save_path.replace('.pt', '')}_step_{global_step}.pt")
+                        torch.save(model.state_dict(), save_path)
+                        if args.use_wandb:
+                            pass
+                            # log_artifact(run, save_path, f"{args.mode}_{now_date}") # wandb artifact 저장 필요 시
+                
+                current_step = train_loop.n
+                with torch.no_grad() :
+                    avg_mtp = total_mtp_loss / current_step
+                    avg_tpp = total_tpp_loss / current_step
+                    avg_tov = total_tov_loss / current_step
+                    avg_total = (total_mtp_loss + total_tpp_loss + total_tov_loss) / current_step
+
+                train_loop.set_postfix(dict(avg_total=f'{avg_total:.4f}',
+                                        avg_mtp=f'{avg_mtp:.4f}',
+                                        avg_tpp=f'{avg_tpp:.4f}',
+                                        avg_tov=f'{avg_tov:.4f}'), refresh=False)
+        except (KeyboardInterrupt, Exception) as e:
+            print(f"\n{type(e).__name__} — saving checkpoint")
+            save_path = path_model.joinpath(f"checkpoint-{global_step}.pt")
+            save_checkpoint(model, optimizer, global_step, best_loss, interval_loss_sum_total, interval_loss_sum_mtp, interval_loss_sum_tpp, interval_loss_sum_tov, save_path)
+            print(f"\nmodel save at {global_step}")
+            break
+
     if args.use_wandb :
         wandb.finish()
 
 
-def validate(model, dataloader, device, cfg, args):
+def validate(model, dataloader, device, global_step, cfg, args):
     model.eval()
     total_loss = 0
     mtp_loss_total = 0
@@ -466,7 +521,7 @@ def validate(model, dataloader, device, cfg, args):
             "step/val_mtp_loss": avg_mtp,
             "step/val_tpp_loss": avg_tpp,
             "step/val_tov_loss": avg_tov,
-        })
+        },step=global_step//args.log_interval -1)
     
     model.train()
 
@@ -481,6 +536,8 @@ def main() :
     parser.add_argument("--type", choices=["transformer", "mamba"], required=True,
                         help="Pre-training type: transformer or mamba")
     parser.add_argument("--bidirectional", default=False, type=bool, help="Use bidirectional mamba if True")
+    parser.add_argument("--checkpoint_path", type=str, default=None, help="Path to checkpoint")
+    parser.add_argument("--run_id", type=str, default=None, help="Wandb run id")
     parser.add_argument("--save", type=str, default="pretrained.pt", help="Path to save model state dict")
     parser.add_argument("--total_steps", type=int, default=10000000, help="Total training steps")
     parser.add_argument("--val_check_interval", type=int, default=20000, help="Steps between validation")
@@ -493,6 +550,8 @@ def main() :
     parser.add_argument("--tokenizer_vocab_size", type=int, default=cfg.vocab_size_subword, help="Tokenizer vocab size")
 
     args = parser.parse_args()
+    if args.checkpoint_path is not None and args.run_id is None:
+        parser.error("--run_id is required when --checkpoint_path is provided")
     args.use_wandb = not args.no_wandb
 
     cfg = PretrainConfig(
@@ -508,6 +567,8 @@ def main() :
 
     print(f"--mode: {args.mode}")
     print(f"--bidirectional: {args.bidirectional}")
+    print(f"--checkpoint_path: {args.checkpoint_path}")
+    print(f"--run_id: {args.run_id}")
     print(f"--save: {args.save}")
     print(f"--total_steps: {args.total_steps}")
     print(f"--val_check_interval: {args.val_check_interval}")
