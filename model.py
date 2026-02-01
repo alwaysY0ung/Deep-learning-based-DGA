@@ -279,11 +279,11 @@ class FineTuningModel(nn.Module):
                 c_feat = c_out[:, 0, :]
             features.append(c_feat)
 
-            if self.use_bert and bert_input_ids is not None :
-                with torch.no_grad():
-                    bert_out = self.bert(bert_input_ids, attention_mask=bert_mask)
-                    bert_feat = bert_out.last_hidden_state[:, 0, :]
-                features.append(bert_feat)
+        if self.use_bert and bert_input_ids is not None :
+            with torch.no_grad():
+                bert_out = self.bert(bert_input_ids, attention_mask=bert_mask)
+                bert_feat = bert_out.last_hidden_state[:, 0, :]
+            features.append(bert_feat)
 
         combined_output = torch.cat(features, dim=1) if len(features) > 1 else features[0]
 
