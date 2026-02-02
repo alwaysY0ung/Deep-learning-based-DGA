@@ -263,7 +263,6 @@ class MambaBackbone(nn.Module) :
             return out
         else : # uni mamba
             return fwd_out
-            
 
 class PretrainMamba(nn.Module) : # best practice based on paper # wrapper class
     def __init__(
@@ -405,13 +404,18 @@ class FineTuningModel(nn.Module):
             t_x = self.positional_encoding_t(t_embed)
             t_mask = self.create_padding_mask(input_ids_t)
             t_out = self.transformer_encoder_t(t_x, mask=t_mask)
-
-            # TODO: # forward 내부의 Pooling 부분 수정
-            # Padding에 대해... # Masked처리된  Mean/Max Pooling (TOVHead 로직과 동일하게 적용해야 함)
             
             if self.clf_norm == 'pool':
                 # Max pool + Mean pool (d_model * 2)
-                t_feat = torch.cat([t_out.max(dim=1).values, t_out.mean(dim=1)], dim=1)
+                valid_mask = (~t_mask).float().unsqueeze(-1)
+
+                t_sum = (t_out * valid_mask).sum(dim=1)
+                t_len = valid_mask.sum(dim=1).clamp(min=1)
+                t_mean = t_sum / t_len
+
+                t_max = (t_out.masked_fill(valid_mask == 0, -1e9)).max(dim=1).values
+
+                t_feat = torch.cat([t_max, t_mean], dim=1)
             else:
                 # CLS Token (d_model * 1)
                 t_feat = t_out[:, 0, :]
@@ -429,17 +433,25 @@ class FineTuningModel(nn.Module):
 
             if self.clf_norm == 'pool':
                 # Max pool + Mean pool (d_model * 2)
-                c_feat = torch.cat([c_out.max(dim=1).values, c_out.mean(dim=1)], dim=1)
+                valid_mask = (~c_mask).float().unsqueeze(-1)
+
+                c_sum = (c_out * valid_mask).sum(dim=1)
+                c_len = valid_mask.sum(dim=1).clamp(min=1)
+                c_mean = c_sum / c_len
+
+                c_max = (c_out.masked_fill(valid_mask == 0, -1e9)).max(dim=1).values
+
+                c_feat = torch.cat([c_max, c_mean], dim=1)
             else:
                 # CLS Token (d_model * 1)
                 c_feat = c_out[:, 0, :]
             features.append(c_feat)
 
-            if self.use_bert and bert_input_ids is not None :
-                with torch.no_grad():
-                    bert_out = self.bert(bert_input_ids, attention_mask=bert_mask)
-                    bert_feat = bert_out.last_hidden_state[:, 0, :]
-                features.append(bert_feat)
+        if self.use_bert and bert_input_ids is not None :
+            with torch.no_grad():
+                bert_out = self.bert(bert_input_ids, attention_mask=bert_mask)
+                bert_feat = bert_out.last_hidden_state[:, 0, :]
+            features.append(bert_feat)
 
         combined_output = torch.cat(features, dim=1) if len(features) > 1 else features[0]
 
@@ -464,6 +476,120 @@ class FineTuningModel(nn.Module):
             for p in self.transformer_encoder_c.parameters(): p.requires_grad = trainable
             for p in self.embedding_c.parameters(): p.requires_grad = trainable
             for p in self.positional_encoding_c.parameters(): p.requires_grad = trainable
+            
+        status = "고정(Frozen)" if freeze else "해제(Unfrozen)"
+        print(f"--- Backbone이 {status} 상태로 변경되었습니다. ---")
+
+class FineTuningMamba(nn.Module):
+    def __init__(self, pretrain_model_t, pretrain_model_c, dropout=0.1, padding_idx=0, clf_norm = 'cls', freeze_backbone=False):
+        super().__init__()
+
+        self.padding_idx = padding_idx
+        self.clf_norm = clf_norm
+
+        sample_model = pretrain_model_t # Extract d_model value
+        d_model = sample_model.d_model
+
+        dim_per_path = d_model * 2 if self.clf_norm == 'pool' else d_model
+        total_input_dim = dim_per_path * 2
+
+        # --- Token Path Components ---
+        # load_pretrain(pretrain_model_t)
+        self.mamba_encoder_t = pretrain_model_t.model
+        if freeze_backbone:
+            self._set_grad(self.mamba_encoder_t, False)
+
+        # --- Character Path Components ---
+        # load_pretrain(pretrain_model_c)
+        self.mamba_encoder_c = pretrain_model_c.model
+        if freeze_backbone:
+            self._set_grad(self.mamba_encoder_c, False)
+        
+        # DGA 분류 헤드 연결
+        self.classifier_head = FinetuningHead(
+            input_dim=total_input_dim,
+            d_model=d_model,
+            dropout=dropout
+        )
+
+    def _set_grad(self, module, requires_grad=False):
+        for param in module.parameters():
+            param.requires_grad = requires_grad
+
+    def create_padding_mask(self, input_ids):
+        return (input_ids == self.padding_idx).to(input_ids.device)
+
+    def forward(self, input_ids_t=None, input_ids_c=None):
+        features = []
+        sep_idx_t = (input_ids_t == 3).int().argmax(dim=1)  # (B,)
+        sep_idx_c = (input_ids_c == 3).int().argmax(dim=1)  # (B,)
+
+        # --- 1. Token Path (X_t) 처리 ---
+        t_mask = self.create_padding_mask(input_ids_t)
+        t_out = self.mamba_encoder_t(input_ids_t, padding_mask=t_mask)
+
+        # TODO: # forward 내부의 Pooling 부분 수정
+        # Padding에 대해... # Masked처리된  Mean/Max Pooling (TOVHead 로직과 동일하게 적용해야 함)
+        
+        if self.clf_norm == 'pool':
+            # Max pool + Mean pool (d_model * 2)
+            valid_mask = (~t_mask).float().unsqueeze(-1)
+
+            t_sum = (t_out * valid_mask).sum(dim=1)
+            t_len = valid_mask.sum(dim=1).clamp(min=1)
+            t_mean = t_sum / t_len
+
+            t_max = (t_out.masked_fill(valid_mask == 0, -1e9)).max(dim=1).values
+
+            t_feat = torch.cat([t_max, t_mean], dim=1)
+        else:
+            # SEP Token (d_model)
+            B = t_out.size(0)
+            batch_idx = torch.arange(B, device=t_out.device)
+            t_feat = t_out[batch_idx, sep_idx_t, :]
+        features.append(t_feat)
+
+        # --- 2. Character Path (X_c) 처리 ---
+        c_mask = self.create_padding_mask(input_ids_c)
+        c_out = self.mamba_encoder_c(input_ids_c, padding_mask=c_mask)
+
+        # print(f"c_x shape: {c_x.shape}") # 예상: [128, 77, 256]
+        # print(f"c_mask shape: {c_mask.shape}") # 예상: [128, 77]
+
+        if self.clf_norm == 'pool':
+            # Max pool + Mean pool (d_model * 2)
+            valid_mask = (~c_mask).float().unsqueeze(-1)
+
+            c_sum = (c_out * valid_mask).sum(dim=1)
+            c_len = valid_mask.sum(dim=1).clamp(min=1)
+            c_mean = c_sum / c_len
+
+            c_max = (c_out.masked_fill(valid_mask == 0, -1e9)).max(dim=1).values
+
+            c_feat = torch.cat([c_max, c_mean], dim=1)
+        else:
+            # SEP Token (d_model)
+            B = c_out.size(0)
+            batch_idx = torch.arange(B, device=c_out.device)
+            c_feat = c_out[batch_idx, sep_idx_c, :]
+        features.append(c_feat)
+
+        combined_output = torch.cat(features, dim=1) if len(features) > 1 else features[0]
+
+        # # 디버깅용 출력 (한 번만 확인하고 지우셔도 됩니다)
+        # if not hasattr(self, '_size_checked'):
+        #     print(f"DEBUG: Combined output shape: {combined_output.shape}")
+        #     print(f"DEBUG: Head input_dim: {self.classifier_head.dense1.in_features}")
+        #     self._size_checked = True
+
+        return self.classifier_head(combined_output)
+    
+    def set_backbone_freezing(self, freeze=True):
+        """Backbone의 학습 여부를 외부에서 조절하는 함수"""
+        trainable = not freeze
+        
+        for p in self.mamba_encoder_t.parameters(): p.requires_grad = trainable
+        for p in self.mamba_encoder_c.parameters(): p.requires_grad = trainable
             
         status = "고정(Frozen)" if freeze else "해제(Unfrozen)"
         print(f"--- Backbone이 {status} 상태로 변경되었습니다. ---")
