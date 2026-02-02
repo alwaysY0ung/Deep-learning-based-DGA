@@ -157,7 +157,7 @@ def fine_tune_dga_classifier(args,pt_model_t, pt_model_c,
 
                 if global_step % 10000 == 0 :
 
-                    avg_val_loss, val_acc, val_precision, val_recall, val_f1 = evaluate_finetuning(ft_model, val_dataloader, device, use_bert)
+                    avg_val_loss, val_acc, val_precision, val_recall, val_f1 = evaluate_finetuning(ft_model, val_dataloader, device, args)
 
                     wandb.log({
                         'train/loss' : avg_total_interval_loss,
@@ -189,7 +189,7 @@ def fine_tune_dga_classifier(args,pt_model_t, pt_model_c,
 
             train_loop.set_postfix(avg_loss=f'{avg_total:.4f}', refresh=False)
 
-def evaluate_finetuning(model, dataloader, device, use_bert):
+def evaluate_finetuning(model, dataloader, device, args):
     model.eval()
     criterion = nn.CrossEntropyLoss()
     total_loss = 0
@@ -206,18 +206,18 @@ def evaluate_finetuning(model, dataloader, device, use_bert):
             batch = [b.to(device) for b in batch]
             y_val = batch[-1]
 
-            if use_bert:
+            if args.use_bert:
                 X_token, X_char, X_bert, X_bert_mask = batch[:-1]
                 logits = model(
-                X_token if model.use_token else None, 
-                X_char if model.use_char else None,
+                X_token if args.use_token else None, 
+                X_char if args.use_char else None,
                 X_bert, X_bert_mask
             )
             else:
                 X_token, X_char = batch[:-1]
                 logits = model(
-                X_token if model.use_token else None, 
-                X_char if model.use_char else None
+                X_token if args.use_token else None, 
+                X_char if args.use_char else None
             )
             
             loss = criterion(logits, y_val)
