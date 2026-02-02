@@ -6,9 +6,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from preprocessing import FineTuningDataset
-from transformers import AutoTokenizer
 from transformers import PreTrainedTokenizerFast
-from model import PretrainedModel, FineTuningModel
+from model import PretrainedModel, PretrainMamba, FineTuningModel, FineTuningMamba
 from tqdm import tqdm
 import time
 import datetime
@@ -19,35 +18,50 @@ from utility.path import path_tokenizer, path_model
 from utility.config import FinetuningConfig
 import argparse
 
-def load_pretrain_weights(pt_model, weigths_path, device) :
+def load_pretrain_weights(pt_model, weigths_path, type_, device) :
     state_dict = torch.load(weigths_path, map_location=device)
 
     weights_to_load = {}
 
-    for name, param in state_dict.items() :
-        if name.startswith('transformer.') or name.startswith('embedding.') or name.startswith('positional_encoding.') :
-            weights_to_load[name] = param
+    if type_ == 'transformer' :
+        for name, param in state_dict.items() :
+            if name.startswith('transformer.') or name.startswith('embedding.') or name.startswith('positional_encoding.') :
+                weights_to_load[name] = param
+    elif type_ == 'mamba' :
+        for name, param in state_dict.items():
+            if name.startswith('model.'):
+                # model. prefix 제거
+                new_name = name.replace('model.', '', 1)
+                weights_to_load[new_name] = param
 
     pt_model.load_state_dict(weights_to_load, strict=False)
     return pt_model
 
-def fine_tune_dga_classifier(pt_model_t, pt_model_c,
+def fine_tune_dga_classifier(args,pt_model_t, pt_model_c,
                              train_dataloader, val_dataloader, weights_path_t, weights_path_c,
                              device, num_epochs, log_interval_steps, save_path,
                              use_token=True, use_char=True, use_bert=False, freeze_backbone=True,
                              unfreeze_at_epoch=0.5, clf_norm='cls',
                              learning_rate=1e-4, backbone_lr=1e-6,):
 
-    pt_t = load_pretrain_weights(pt_model_t, weights_path_t, device) if use_token else None
-    pt_c = load_pretrain_weights(pt_model_c, weights_path_c, device) if use_char else None
+    pt_t = load_pretrain_weights(pt_model_t, weights_path_t, args.type, device) if use_token else None
+    pt_c = load_pretrain_weights(pt_model_c, weights_path_c, args.type, device) if use_char else None
     
-    ft_model = FineTuningModel(
-        pretrain_model_t=pt_t, 
-        pretrain_model_c=pt_c,
-        use_bert=use_bert,
-        freeze_backbone=freeze_backbone,
-        clf_norm=clf_norm # or 'cls' method
-    ).to(device)
+    if args.type == 'transformer' :
+        ft_model = FineTuningModel(
+            pretrain_model_t=pt_t, 
+            pretrain_model_c=pt_c,
+            use_bert=use_bert,
+            freeze_backbone=freeze_backbone,
+            clf_norm=clf_norm # or 'cls' method
+        ).to(device)
+    elif args.type == 'mamba' :
+        ft_model = FineTuningMamba(
+            pretrain_model_t=pt_t, 
+            pretrain_model_c=pt_c,
+            freeze_backbone=freeze_backbone,
+            clf_norm=clf_norm # or 'cls' method
+        ).to(device)
 
     param_groups = [
         {
@@ -56,17 +70,23 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
         }
     ]
     
-    if ft_model.use_token:
+    if args.type == 'transformer' :
+        if ft_model.use_token:
+            param_groups.extend([
+                {'params': ft_model.transformer_encoder_t.parameters(), 'lr': backbone_lr},
+                {'params': ft_model.embedding_t.parameters(), 'lr': backbone_lr},
+                {'params': ft_model.positional_encoding_t.parameters(), 'lr': backbone_lr}
+            ])
+        if ft_model.use_char:
+            param_groups.extend([
+                {'params': ft_model.transformer_encoder_c.parameters(), 'lr': backbone_lr},
+                {'params': ft_model.embedding_c.parameters(), 'lr': backbone_lr},
+                {'params': ft_model.positional_encoding_c.parameters(), 'lr': backbone_lr}
+            ])
+    elif args.type == 'mamba' :
         param_groups.extend([
-            {'params': ft_model.transformer_encoder_t.parameters(), 'lr': backbone_lr},
-            {'params': ft_model.embedding_t.parameters(), 'lr': backbone_lr},
-            {'params': ft_model.positional_encoding_t.parameters(), 'lr': backbone_lr}
-        ])
-    if ft_model.use_char:
-        param_groups.extend([
-            {'params': ft_model.transformer_encoder_c.parameters(), 'lr': backbone_lr},
-            {'params': ft_model.embedding_c.parameters(), 'lr': backbone_lr},
-            {'params': ft_model.positional_encoding_c.parameters(), 'lr': backbone_lr}
+            {'params': ft_model.mamba_encoder_t.parameters(), 'lr': backbone_lr},
+            {'params': ft_model.mamba_encoder_c.parameters(), 'lr': backbone_lr},
         ])
 
     optimizer = optim.Adam(param_groups)
@@ -233,13 +253,15 @@ def main():
 
     # 경로
     parser.add_argument("--tokenizer_path", type=str, default=cfg.tokenizer_path)
-    parser.add_argument("--use_bert_pretokenizer", type=bool, default=False)
     parser.add_argument("--project_name", type=str, default=cfg.project_name)
     parser.add_argument("--best_filename", type=str, default=cfg.best_filename)
     parser.add_argument("--wandb_mode", type=str, default=cfg.wandb_mode)
     parser.add_argument("--timestamp", type=str, default=cfg.timestamp)
 
     # 모델 구조 관련
+    parser.add_argument("--type", choices=["transformer", "mamba"], required=True,
+                        help="Pre-training type: transformer or mamba")
+    parser.add_argument("--bidirectional", default=False, type=bool, help="Use bidirectional mamba if True")
     parser.add_argument("--d_model", type=int, default=cfg.d_model)
     parser.add_argument("--nhead", type=int, default=cfg.nhead)
     parser.add_argument("--dim_feedforward", type=int, default=cfg.dim_feedforward)
@@ -269,13 +291,14 @@ def main():
 
     args = parser.parse_args()
 
+    if args.type == "transformer" and args.bidirectional :
+        raise ValueError(f"{'-' * 20}\nBidirectional is not supported for transformer.\n \
+            There's only three case for model type: transformer, mamba, mamba-bidirectional.\n{'-' * 20}")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # 토크나이저 & 경로 & 완디비
-    if args.use_bert_pretokenizer :
-        tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased', use_fast=True)
-    else :
-        tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(args.tokenizer_path)))
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(args.tokenizer_path)))
     vocab_size_token = tokenizer.vocab_size
 
     save_dir = path_model.joinpath(args.timestamp)
@@ -302,15 +325,22 @@ def main():
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, 
                                 shuffle=False, num_workers=args.num_workers)
 
-    pt_model_t = PretrainedModel(vocab_size=vocab_size_token, d_model=args.d_model, 
-                                 n_heads=args.nhead, dim_feedforward=args.dim_feedforward, 
-                                 num_layers=args.num_layers, max_len=args.max_len_token)
-    pt_model_c = PretrainedModel(vocab_size=args.vocab_size_char, d_model=args.d_model, 
-                                 n_heads=args.nhead, dim_feedforward=args.dim_feedforward, 
-                                 num_layers=args.num_layers, max_len=args.max_len_char)
+    if args.type == 'transformer' :
+        pt_model_t = PretrainedModel(vocab_size=vocab_size_token, d_model=args.d_model, 
+                                    n_heads=args.nhead, dim_feedforward=args.dim_feedforward, 
+                                    num_layers=args.num_layers, max_len=args.max_len_token)
+        pt_model_c = PretrainedModel(vocab_size=args.vocab_size_char, d_model=args.d_model, 
+                                    n_heads=args.nhead, dim_feedforward=args.dim_feedforward, 
+                                    num_layers=args.num_layers, max_len=args.max_len_char)
+    elif args.type == 'mamba' :
+        pt_model_t = PretrainMamba(vocab_size=vocab_size_token, d_model=args.d_model,
+                                   num_layers=args.num_layers, mamba_bidirectional=args.bidirectional)
+        pt_model_c = PretrainMamba(vocab_size=args.vocab_size_char, d_model=args.d_model,
+                                   num_layers=args.num_layers, mamba_bidirectional=args.bidirectional)
     
     # 학습 실행
     fine_tune_dga_classifier(
+        args,
         pt_model_t,
         pt_model_c,
         train_dataloader,
