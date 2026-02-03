@@ -521,7 +521,7 @@ def validate(model, dataloader, device, global_step, cfg, args):
             "step/val_mtp_loss": avg_mtp,
             "step/val_tpp_loss": avg_tpp,
             "step/val_tov_loss": avg_tov,
-        },step=global_step//args.log_interval -1)
+        },step=global_step//args.log_interval)
     
     model.train()
 
