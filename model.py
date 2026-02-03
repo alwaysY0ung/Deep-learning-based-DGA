@@ -559,8 +559,8 @@ class FineTuningMamba(nn.Module):
             return torch.cat([max, mean], dim=1)
         else:
             # SEP Token (d_model * 1)
-            sep_idx = (mask == False).int().argmax(dim=1)
-            batch_idx = torch.arange(sep_idx.shape[0], device=attn_out.device)
+            sep_idx = (~mask).sum(dim=1) - 1
+            batch_idx = torch.arange(attn_out.shape[0], device=attn_out.device)
             return attn_out[batch_idx, sep_idx, :]
 
     def forward(self, input_ids_t=None, input_ids_c=None):
