@@ -172,6 +172,7 @@ class PretrainedModel(nn.Module) :
         self.padding_idx = padding_idx
         self.max_len = max_len
         self.tov_norm = tov_norm
+        self.n_heads = n_heads
 
         self.embedding = TokenEmbedding(vocab_size, d_model, padding_idx)
         self.positional_encoding = PositionalEncoding(d_model, max_len)
@@ -316,6 +317,33 @@ class PretrainMamba(nn.Module) : # best practice based on paper # wrapper class
 
         return outputs
 
+class CrossAttention(nn.Module) :
+    def __init__(self, d_model, n_heads, dropout=0.1) :
+        super().__init__()
+
+        self.attn_t = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        self.attn_c = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        
+        self.norm_t = nn.LayerNorm(d_model)
+        self.norm_c = nn.LayerNorm(d_model)
+
+    def forward(self, feat_t, feat_c, mask_t=None, mask_c=None) :
+        """
+        feat_t: [B, L_t, d_model]
+        feat_c: [B, L_c, d_model]
+        mask_t: [B, L_t] True for PAD
+        mask_c: [B, L_c] True for PAD
+        """
+        Q = torch.cat((feat_t, feat_c), dim=1) # [B, L_t+L_c, d_model]
+
+        out_t, _ = self.attn_t(Q, feat_t, feat_t, key_padding_mask=mask_t)
+        out_c, _ = self.attn_c(Q, feat_c, feat_c, key_padding_mask=mask_c)
+
+        attn_t = self.norm_t(out_t + Q) # [B, L_t+L_c, d_model]
+        attn_c = self.norm_c(out_c + Q) # [B, L_t+L_c, d_model]
+
+        return attn_t, attn_c
+
 class FinetuningHead(nn.Module) :
     def __init__(self, input_dim, d_model, dropout) :
         super().__init__()
@@ -336,7 +364,7 @@ class FinetuningHead(nn.Module) :
         return logits
     
 class FineTuningModel(nn.Module):
-    def __init__(self, pretrain_model_t=None, pretrain_model_c=None, use_bert=False,
+    def __init__(self, pretrain_model_t=None, pretrain_model_c=None, use_bert=False, use_cross_attn=False,
                  dropout=0.1, padding_idx=0, clf_norm = 'cls', freeze_backbone=False):
         super().__init__()
 
@@ -345,9 +373,11 @@ class FineTuningModel(nn.Module):
         self.use_token = pretrain_model_t is not None
         self.use_char = pretrain_model_c is not None
         self.use_bert = use_bert
+        self.use_cross_attn = self.use_token and self.use_char and use_cross_attn
 
         sample_model = pretrain_model_t if self.use_token else pretrain_model_c # Extract d_model value
         d_model = sample_model.d_model
+        n_heads = sample_model.n_heads
 
         num_active_paths = sum([self.use_token, self.use_char])
         dim_per_path = d_model * 2 if self.clf_norm == 'pool' else d_model
@@ -379,13 +409,11 @@ class FineTuningModel(nn.Module):
                 self._set_grad(self.transformer_encoder_c, False)
                 self._set_grad(self.embedding_c, False)
                 self._set_grad(self.positional_encoding_c, False)
+
+        if self.use_cross_attn :
+            self.cross_attn = CrossAttention(d_model, n_heads, dropout)
         
-        # DGA 분류 헤드 연결
-        self.classifier_head = FinetuningHead(
-            input_dim=total_input_dim,
-            d_model=d_model,
-            dropout=dropout
-        )
+        self.classifier_head = FinetuningHead(total_input_dim, d_model, dropout)
 
     def _set_grad(self, module, requires_grad=False):
         for param in module.parameters():
@@ -393,6 +421,22 @@ class FineTuningModel(nn.Module):
 
     def create_padding_mask(self, input_ids):
         return (input_ids == self.padding_idx).to(input_ids.device)
+
+    def extract_features(self, attn_out, mask) :
+        if self.clf_norm == 'pool':
+            # Max pool + Mean pool (d_model * 2)
+            valid_mask = (~mask).float().unsqueeze(-1)
+
+            sum = (attn_out * valid_mask).sum(dim=1)
+            len = valid_mask.sum(dim=1).clamp(min=1)
+            mean = sum / len
+
+            max = (attn_out.masked_fill(valid_mask == 0, -1e9)).max(dim=1).values
+
+            return torch.cat([max, mean], dim=1)
+        else:
+            # CLS Token (d_model * 1)
+            return attn_out[:, 0, :]
 
     def forward(self, input_ids_t=None, input_ids_c=None, 
                 bert_input_ids=None, bert_mask=None):
@@ -404,22 +448,6 @@ class FineTuningModel(nn.Module):
             t_x = self.positional_encoding_t(t_embed)
             t_mask = self.create_padding_mask(input_ids_t)
             t_out = self.transformer_encoder_t(t_x, mask=t_mask)
-            
-            if self.clf_norm == 'pool':
-                # Max pool + Mean pool (d_model * 2)
-                valid_mask = (~t_mask).float().unsqueeze(-1)
-
-                t_sum = (t_out * valid_mask).sum(dim=1)
-                t_len = valid_mask.sum(dim=1).clamp(min=1)
-                t_mean = t_sum / t_len
-
-                t_max = (t_out.masked_fill(valid_mask == 0, -1e9)).max(dim=1).values
-
-                t_feat = torch.cat([t_max, t_mean], dim=1)
-            else:
-                # CLS Token (d_model * 1)
-                t_feat = t_out[:, 0, :]
-            features.append(t_feat)
 
         # --- 2. Character Path (X_c) 처리 ---
         if self.use_char and input_ids_c is not None:
@@ -428,24 +456,21 @@ class FineTuningModel(nn.Module):
             c_mask = self.create_padding_mask(input_ids_c)
             c_out = self.transformer_encoder_c(c_x, mask=c_mask)
 
-            # print(f"c_x shape: {c_x.shape}") # 예상: [128, 77, 256]
-            # print(f"c_mask shape: {c_mask.shape}") # 예상: [128, 77]
+        # --- 3. Cross Attention ---
+        if self.use_cross_attn :
+            attn_t, attn_c = self.cross_attn(t_out, c_out, t_mask, c_mask)
 
-            if self.clf_norm == 'pool':
-                # Max pool + Mean pool (d_model * 2)
-                valid_mask = (~c_mask).float().unsqueeze(-1)
+            t_feat = self.extract_features(attn_t, t_mask)
+            c_feat = self.extract_features(attn_c, c_mask)
 
-                c_sum = (c_out * valid_mask).sum(dim=1)
-                c_len = valid_mask.sum(dim=1).clamp(min=1)
-                c_mean = c_sum / c_len
-
-                c_max = (c_out.masked_fill(valid_mask == 0, -1e9)).max(dim=1).values
-
-                c_feat = torch.cat([c_max, c_mean], dim=1)
-            else:
-                # CLS Token (d_model * 1)
-                c_feat = c_out[:, 0, :]
-            features.append(c_feat)
+            features = [t_feat, c_feat]
+        else :
+            if self.use_token:
+                t_feat = self.extract_features(t_out, t_mask)
+                features.append(t_feat)
+            if self.use_char:
+                c_feat = self.extract_features(c_out, c_mask)
+                features.append(c_feat)
 
         if self.use_bert and bert_input_ids is not None :
             with torch.no_grad():
@@ -481,11 +506,14 @@ class FineTuningModel(nn.Module):
         print(f"--- Backbone이 {status} 상태로 변경되었습니다. ---")
 
 class FineTuningMamba(nn.Module):
-    def __init__(self, pretrain_model_t, pretrain_model_c, dropout=0.1, padding_idx=0, clf_norm = 'cls', freeze_backbone=False):
+    def __init__(self, pretrain_model_t, pretrain_model_c, use_cross_attn=False, n_heads=8, 
+                dropout=0.1, padding_idx=0, clf_norm = 'cls', freeze_backbone=False):
         super().__init__()
 
         self.padding_idx = padding_idx
         self.clf_norm = clf_norm
+        self.n_heads = n_heads
+        self.use_cross_attn = use_cross_attn
 
         sample_model = pretrain_model_t # Extract d_model value
         d_model = sample_model.d_model
@@ -504,13 +532,11 @@ class FineTuningMamba(nn.Module):
         self.mamba_encoder_c = pretrain_model_c.model
         if freeze_backbone:
             self._set_grad(self.mamba_encoder_c, False)
-        
-        # DGA 분류 헤드 연결
-        self.classifier_head = FinetuningHead(
-            input_dim=total_input_dim,
-            d_model=d_model,
-            dropout=dropout
-        )
+
+        if self.use_cross_attn:
+            self.cross_attn = CrossAttention(d_model, n_heads, dropout)
+          
+        self.classifier_head = FinetuningHead(total_input_dim, d_model, dropout)
 
     def _set_grad(self, module, requires_grad=False):
         for param in module.parameters():
@@ -519,60 +545,48 @@ class FineTuningMamba(nn.Module):
     def create_padding_mask(self, input_ids):
         return (input_ids == self.padding_idx).to(input_ids.device)
 
+    def extract_features(self, attn_out, mask) :
+        if self.clf_norm == 'pool':
+            # Max pool + Mean pool (d_model * 2)
+            valid_mask = (~mask).float().unsqueeze(-1)
+
+            sum = (attn_out * valid_mask).sum(dim=1)
+            len = valid_mask.sum(dim=1).clamp(min=1)
+            mean = sum / len
+
+            max = (attn_out.masked_fill(valid_mask == 0, -1e9)).max(dim=1).values
+
+            return torch.cat([max, mean], dim=1)
+        else:
+            # SEP Token (d_model * 1)
+            sep_idx = (mask == False).int().argmax(dim=1)
+            batch_idx = torch.arange(sep_idx.shape[0], device=attn_out.device)
+            return attn_out[batch_idx, sep_idx, :]
+
     def forward(self, input_ids_t=None, input_ids_c=None):
         features = []
-        sep_idx_t = (input_ids_t == 3).int().argmax(dim=1)  # (B,)
-        sep_idx_c = (input_ids_c == 3).int().argmax(dim=1)  # (B,)
 
         # --- 1. Token Path (X_t) 처리 ---
         t_mask = self.create_padding_mask(input_ids_t)
         t_out = self.mamba_encoder_t(input_ids_t, padding_mask=t_mask)
 
-        # TODO: # forward 내부의 Pooling 부분 수정
-        # Padding에 대해... # Masked처리된  Mean/Max Pooling (TOVHead 로직과 동일하게 적용해야 함)
-        
-        if self.clf_norm == 'pool':
-            # Max pool + Mean pool (d_model * 2)
-            valid_mask = (~t_mask).float().unsqueeze(-1)
-
-            t_sum = (t_out * valid_mask).sum(dim=1)
-            t_len = valid_mask.sum(dim=1).clamp(min=1)
-            t_mean = t_sum / t_len
-
-            t_max = (t_out.masked_fill(valid_mask == 0, -1e9)).max(dim=1).values
-
-            t_feat = torch.cat([t_max, t_mean], dim=1)
-        else:
-            # SEP Token (d_model)
-            B = t_out.size(0)
-            batch_idx = torch.arange(B, device=t_out.device)
-            t_feat = t_out[batch_idx, sep_idx_t, :]
-        features.append(t_feat)
-
         # --- 2. Character Path (X_c) 처리 ---
         c_mask = self.create_padding_mask(input_ids_c)
         c_out = self.mamba_encoder_c(input_ids_c, padding_mask=c_mask)
 
-        # print(f"c_x shape: {c_x.shape}") # 예상: [128, 77, 256]
-        # print(f"c_mask shape: {c_mask.shape}") # 예상: [128, 77]
+        # --- 3. Cross Attention ---
+        if self.use_cross_attn:
+            attn_t, attn_c = self.cross_attn(t_out, c_out, t_mask, c_mask)
 
-        if self.clf_norm == 'pool':
-            # Max pool + Mean pool (d_model * 2)
-            valid_mask = (~c_mask).float().unsqueeze(-1)
+            t_feat = self.extract_features(attn_t, t_mask)
+            c_feat = self.extract_features(attn_c, c_mask)
 
-            c_sum = (c_out * valid_mask).sum(dim=1)
-            c_len = valid_mask.sum(dim=1).clamp(min=1)
-            c_mean = c_sum / c_len
-
-            c_max = (c_out.masked_fill(valid_mask == 0, -1e9)).max(dim=1).values
-
-            c_feat = torch.cat([c_max, c_mean], dim=1)
+            features = [t_feat, c_feat]
         else:
-            # SEP Token (d_model)
-            B = c_out.size(0)
-            batch_idx = torch.arange(B, device=c_out.device)
-            c_feat = c_out[batch_idx, sep_idx_c, :]
-        features.append(c_feat)
+            t_feat = self.extract_features(t_out, t_mask)
+            c_feat = self.extract_features(c_out, c_mask)
+
+            features = [t_feat, c_feat] 
 
         combined_output = torch.cat(features, dim=1) if len(features) > 1 else features[0]
 
