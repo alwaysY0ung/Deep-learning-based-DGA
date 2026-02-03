@@ -342,6 +342,10 @@ class CrossAttention(nn.Module) :
         attn_t = self.norm_t(out_t + Q) # [B, L_t+L_c, d_model]
         attn_c = self.norm_c(out_c + Q) # [B, L_t+L_c, d_model]
 
+        # Split back
+        attn_t = attn_t[:, :feat_t.size(1), :] # [B, L_t, d_model]
+        attn_c = attn_c[:, feat_t.size(1):, :] # [B, L_c, d_model]
+
         return attn_t, attn_c
 
 class FinetuningHead(nn.Module) :
