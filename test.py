@@ -5,10 +5,9 @@ import numpy as np
 import torch
 import time
 from preprocessing import FineTuningDataset
-from transformers import AutoTokenizer
 from transformers import PreTrainedTokenizerFast
 from torch.utils.data import DataLoader
-from model import PretrainedModel, FineTuningModel
+from model import PretrainedModel, PretrainMamba, FineTuningModel, FineTuningMamba
 from tqdm import tqdm
 import pathlib
 import glob
@@ -75,7 +74,7 @@ def test_finetuning(model, device, test_dataloader, use_bert=False):
     return metrics, all_preds, all_labels
 
 
-def test_by_year(cfg, args, model, tokenizer, device, use_bert=False):
+def test_by_year(cfg, args, model, tokenizer, device):
     years = [20, 21, 22, 23, 24, 25]
 
     acc_all, pre_all, rec_all, f1_all, fpr_all, fnr_all = [], [], [], [], [], []
@@ -86,22 +85,26 @@ def test_by_year(cfg, args, model, tokenizer, device, use_bert=False):
 
 
     for year in years:
-        if year in [24, 25]:
-            test_df = get_test_set_24_tld() if year == 24 else get_test_set_25_tld()
-        else:
-            test_df = (
-                get_test_set_20_tld() if year == 20 else
-                get_test_set_21_tld() if year == 21 else
-                get_test_set_22_tld() if year == 22 else
-                get_test_set_23_tld()
-            )
+        
+        if year == 20 :
+            test_df = get_test_set_20_tld()
+        elif year == 21 :
+            test_df = get_test_set_21_tld()
+        elif year == 22 :
+            test_df = get_test_set_22_tld()
+        elif year == 23 :
+            test_df = get_test_set_23_tld()
+        elif year == 24 :
+            test_df = get_test_set_24_tld()
+        elif year == 25 :
+            test_df = get_test_set_25_tld()
 
         dataset = FineTuningDataset(
             test_df,
             tokenizer=tokenizer,
             max_len_t=cfg.max_len_subword,
             max_len_c=cfg.max_len_char,
-            use_bert=use_bert
+            use_bert=args.use_bert
         )
 
         dataloader = DataLoader(
@@ -115,7 +118,7 @@ def test_by_year(cfg, args, model, tokenizer, device, use_bert=False):
         test_loop = tqdm(dataloader, desc='[Test by year]', bar_format='{l_bar}{r_bar}', leave=False)
 
         metrics, preds, labels = test_finetuning(
-            model, device, test_loop, use_bert
+            model, device, test_loop, args.use_bert
         )
 
         # ===== 출력 =====
@@ -195,7 +198,7 @@ def test_by_year(cfg, args, model, tokenizer, device, use_bert=False):
         })
 
 
-def test_by_family(cfg, args, model, tokenizer, device, use_bert=False):
+def test_by_family(cfg, args, model, tokenizer, device):
 
     acc_all = []
     pre_all = []
@@ -221,7 +224,7 @@ def test_by_family(cfg, args, model, tokenizer, device, use_bert=False):
             tokenizer=tokenizer,
             max_len_t=cfg.max_len_subword,
             max_len_c=cfg.max_len_char,
-            use_bert=use_bert
+            use_bert=args.use_bert
         )
 
         dataloader = DataLoader(
@@ -235,7 +238,7 @@ def test_by_family(cfg, args, model, tokenizer, device, use_bert=False):
         test_loop = tqdm(dataloader, desc='[Test by family]', bar_format='{l_bar}{r_bar}', leave=False)
 
         metrics, _, _ = test_finetuning(
-            model, device, test_loop, use_bert
+            model, device, test_loop, args.use_bert
         )
 
         acc_all.append(metrics["accuracy"])
@@ -294,18 +297,26 @@ def test_by_family(cfg, args, model, tokenizer, device, use_bert=False):
 def main() :
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, required=True, help="Path to model checkpoint")
+    parser.add_argument("--pretrain_type", choices=["transformer", "mamba"], required=True,
+                        help="Pre-training type: transformer or mamba")
+    parser.add_argument("--bidirectional", default=False, type=bool, help="Use bidirectional mamba if True")
     parser.add_argument("--test_type", type=str, choices=["year", "family"], default="year", help="Test type")
     parser.add_argument("--clf_norm", type=str, default='cls', choices=['cls', 'pool'])
     parser.add_argument("--save", type=bool, default=False, help="Save results")
-    parser.add_argument("--project_name", type=str, default="proposal", help="Wandb project name")
-    parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")
+    parser.add_argument("--project_name", type=str, default="drift-finetune", help="Wandb project name")
+    parser.add_argument("--run_name", type=str, default="test", help="Wandb run name")
     parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging")
     parser.add_argument("--use_bert", default=False, help="Use BERT backbone")
+    parser.add_argument("--use_cross_attn", type=bool, default=False, help="Use cross attention")
     parser.add_argument("--tokenizer_min_freq", type=int, default=2, help="Tokenizer min frequency")
     parser.add_argument("--tokenizer_vocab_size", type=int, default=32393, help="Tokenizer vocab size")
 
     args = parser.parse_args()
     args.use_wandb = not args.no_wandb
+
+    if args.type == "transformer" and args.bidirectional :
+        raise ValueError(f"{'-' * 20}\nBidirectional is not supported for transformer.\n \
+            There's only three case for model type: transformer, mamba, mamba-bidirectional.\n{'-' * 20}")
 
     cfg = PretrainConfig(
         min_freq_subword=args.tokenizer_min_freq,
@@ -316,25 +327,25 @@ def main() :
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    pt_model_c = PretrainedModel(
-        vocab_size=cfg.vocab_size_char,
-        d_model=cfg.d_model,
-        n_heads=cfg.nhead,
-        dim_feedforward=cfg.dim_feedforward,
-        num_layers=cfg.num_layers,
-        max_len=cfg.max_len_char
-    )
+    if args.pretrain_type == "transformer" :
+        pt_model_c = PretrainedModel(vocab_size=cfg.vocab_size_char, d_model=cfg.d_model, 
+                                    n_heads=cfg.nhead, dim_feedforward=cfg.dim_feedforward,
+                                    num_layers=cfg.num_layers, max_len=cfg.max_len_char)
+        pt_model_t = PretrainedModel(vocab_size=cfg.vocab_size_subword, d_model=cfg.d_model,
+                                    n_heads=cfg.nhead, dim_feedforward=cfg.dim_feedforward,
+                                    num_layers=cfg.num_layers, max_len=cfg.max_len_subword)
 
-    pt_model_t = PretrainedModel(
-        vocab_size=cfg.vocab_size_subword,
-        d_model=cfg.d_model,
-        n_heads=cfg.nhead,
-        dim_feedforward=cfg.dim_feedforward,
-        num_layers=cfg.num_layers,
-        max_len=cfg.max_len_subword
-    )
+        model = FineTuningModel(pt_model_t, pt_model_c, clf_norm=args.clf_norm, 
+                                use_bert=args.use_bert, use_cross_attn=args.use_cross_attn).to(device)
 
-    model = FineTuningModel(pt_model_t, pt_model_c, clf_norm=args.clf_norm, use_bert=args.use_bert).to(device)
+    elif args.pretrain_type == "mamba" :
+        pt_model_c = PretrainMamba(vocab_size=cfg.vocab_size_char, d_model=cfg.d_model,
+                                num_layers=cfg.num_layers, mamba_bidirectional=args.bidirectional)
+        pt_model_t = PretrainMamba(vocab_size=cfg.vocab_size_subword, d_model=cfg.d_model,
+                                num_layers=cfg.num_layers, mamba_bidirectional=args.bidirectional)
+
+        model = FineTuningMamba(pt_model_t, pt_model_c, n_heads=cfg.nhead,
+                                clf_norm=args.clf_norm, use_cross_attn=args.use_cross_attn).to(device)
 
     state = torch.load(path_model.joinpath(args.model_path), map_location=device)
     model.load_state_dict(state, strict=False)
@@ -343,9 +354,9 @@ def main() :
         wandb.init(project=args.project_name, name=args.run_name, config=vars(cfg), tags = ['valid'])
 
     if args.test_type == "year" :
-        test_by_year(cfg, args, model, tokenizer, device, use_bert=args.use_bert)
+        test_by_year(cfg, args, model, tokenizer, device)
     elif args.test_type == "family" :
-        test_by_family(cfg, args, model, tokenizer, device, use_bert=args.use_bert)
+        test_by_family(cfg, args, model, tokenizer, device)
 
     if args.use_wandb:
         wandb.finish()
