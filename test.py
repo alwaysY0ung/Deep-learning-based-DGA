@@ -74,7 +74,7 @@ def test_finetuning(model, device, test_dataloader, use_bert=False):
     return metrics, all_preds, all_labels
 
 
-def test_by_year(cfg, args, model, tokenizer, device, use_bert=False):
+def test_by_year(cfg, args, model, tokenizer, device):
     years = [20, 21, 22, 23, 24, 25]
 
     acc_all, pre_all, rec_all, f1_all, fpr_all, fnr_all = [], [], [], [], [], []
@@ -104,7 +104,7 @@ def test_by_year(cfg, args, model, tokenizer, device, use_bert=False):
             tokenizer=tokenizer,
             max_len_t=cfg.max_len_subword,
             max_len_c=cfg.max_len_char,
-            use_bert=use_bert
+            use_bert=args.use_bert
         )
 
         dataloader = DataLoader(
@@ -118,7 +118,7 @@ def test_by_year(cfg, args, model, tokenizer, device, use_bert=False):
         test_loop = tqdm(dataloader, desc='[Test by year]', bar_format='{l_bar}{r_bar}', leave=False)
 
         metrics, preds, labels = test_finetuning(
-            model, device, test_loop, use_bert
+            model, device, test_loop, args.use_bert
         )
 
         # ===== 출력 =====
@@ -198,7 +198,7 @@ def test_by_year(cfg, args, model, tokenizer, device, use_bert=False):
         })
 
 
-def test_by_family(cfg, args, model, tokenizer, device, use_bert=False):
+def test_by_family(cfg, args, model, tokenizer, device):
 
     acc_all = []
     pre_all = []
@@ -224,7 +224,7 @@ def test_by_family(cfg, args, model, tokenizer, device, use_bert=False):
             tokenizer=tokenizer,
             max_len_t=cfg.max_len_subword,
             max_len_c=cfg.max_len_char,
-            use_bert=use_bert
+            use_bert=args.use_bert
         )
 
         dataloader = DataLoader(
@@ -238,7 +238,7 @@ def test_by_family(cfg, args, model, tokenizer, device, use_bert=False):
         test_loop = tqdm(dataloader, desc='[Test by family]', bar_format='{l_bar}{r_bar}', leave=False)
 
         metrics, _, _ = test_finetuning(
-            model, device, test_loop, use_bert
+            model, device, test_loop, args.use_bert
         )
 
         acc_all.append(metrics["accuracy"])
@@ -342,7 +342,7 @@ def main() :
         pt_model_t = PretrainMamba(vocab_size=cfg.vocab_size_subword, d_model=cfg.d_model,
                                 num_layers=cfg.num_layers, mamba_bidirectional=args.bidirectional)
 
-        model = FineTuningMamba(pt_model_t, pt_model_c, clf_norm=args.clf_norm, use_bert=args.use_bert).to(device)
+        model = FineTuningMamba(pt_model_t, pt_model_c, clf_norm=args.clf_norm).to(device)
 
     state = torch.load(path_model.joinpath(args.model_path), map_location=device)
     model.load_state_dict(state, strict=False)
@@ -351,9 +351,9 @@ def main() :
         wandb.init(project=args.project_name, name=args.run_name, config=vars(cfg), tags = ['valid'])
 
     if args.test_type == "year" :
-        test_by_year(cfg, args, model, tokenizer, device, use_bert=args.use_bert)
+        test_by_year(cfg, args, model, tokenizer, device)
     elif args.test_type == "family" :
-        test_by_family(cfg, args, model, tokenizer, device, use_bert=args.use_bert)
+        test_by_family(cfg, args, model, tokenizer, device)
 
     if args.use_wandb:
         wandb.finish()
